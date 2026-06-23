@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "tot": {
+      "command": "node",
+      "args": ["/home/mhefny/code/mcp/ToT-mcp/dist/index.js"],
+      "env": {
+        "TOT_STORAGE_PATH": "/home/mhefny/code/mcp/ToT-mcp/tot-storage.json",
+        "TOT_OUTPUT_DIR": "/home/mhefny/code/mcp/ToT-mcp/output",
+        "LLM_PROVIDER_TYPE": "none",
+        "GROK_API_KEY": "your-key-here"
+      }
+    }
+  }
+}

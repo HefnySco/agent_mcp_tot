@@ -1,0 +1,36 @@
+{
+  "name": "tot-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Tree of Thoughts (ToT) - structured reasoning and decision tree exploration",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test dist/test/**/*.js",
+    "version:patch": "npm version patch -m 'chore: bump version to %s'",
+    "version:minor": "npm version minor -m 'chore: bump version to %s'",
+    "version:major": "npm version major -m 'chore: bump version to %s'"
+  },
+  "keywords": [
+    "mcp",
+    "tot",
+    "tree-of-thoughts",
+    "reasoning",
+    "decision-tree",
+    "backtracking",
+    "pruning"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.0.0"
+  }
+}
