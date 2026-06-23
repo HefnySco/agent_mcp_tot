@@ -656,6 +656,29 @@ class ToTMCPServer {
               },
               required: ['treeId', 'thoughtId']
             }
+          },
+          {
+            name: 'suggest_next_actions',
+            description: 'Get smart, context-aware recommendations about what to do next in a Tree of Thoughts session',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                treeId: {
+                  type: 'string',
+                  description: 'The ID of the tree to analyze'
+                },
+                focusThoughtId: {
+                  type: 'string',
+                  description: 'Optional thought ID to focus recommendations on'
+                },
+                maxSuggestions: {
+                  type: 'number',
+                  description: 'Maximum number of suggestions to return (default: 5)',
+                  minimum: 1
+                }
+              },
+              required: ['treeId']
+            }
           }
         ]
       };
@@ -1480,6 +1503,33 @@ class ToTMCPServer {
                     originalContent: thought.content,
                     critique: reflectionResult.critique,
                     feedback: feedback || 'Critique this thought and suggest improvements'
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'suggest_next_actions': {
+            const treeId = args?.treeId as string;
+            const focusThoughtId = args?.focusThoughtId as string | undefined;
+            const maxSuggestions = args?.maxSuggestions as number | undefined;
+
+            if (!treeId) {
+              throw new Error('treeId is required');
+            }
+
+            const suggestions = this.totService.suggestNextActions(treeId, focusThoughtId, maxSuggestions);
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Next action suggestions generated successfully',
+                    suggestions,
+                    count: suggestions.length
                   }, null, 2)
                 }
               ]

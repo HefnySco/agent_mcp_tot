@@ -263,3 +263,10 @@ export interface VisualizeTreeParams {
   treeId: string;
   format?: VisualizationFormat;
 }
+
+export interface NextActionSuggestion {
+  action: string;
+  targetThoughtId?: string;
+  reason: string;
+  priority: 'high' | 'medium' | 'low';
+}

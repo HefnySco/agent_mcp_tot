@@ -1,4 +1,4 @@
-import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats } from './types.js';
+import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats, NextActionSuggestion } from './types.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -729,6 +729,170 @@ export class ToTService {
     this.trackUsage(treeId);
 
     return { critique };
+  }
+
+  /**
+   * Suggest next actions based on the current state of the tree
+   * @param treeId - The ID of the tree to analyze
+   * @param focusThoughtId - Optional thought ID to focus recommendations on
+   * @param maxSuggestions - Maximum number of suggestions to return (default: 5)
+   * @returns Array of prioritized action suggestions
+   */
+  suggestNextActions(treeId: string, focusThoughtId?: string, maxSuggestions: number = 5): NextActionSuggestion[] {
+    const tree = this.trees.get(treeId);
+    if (!tree) {
+      throw new TreeNotFoundError(treeId);
+    }
+
+    const suggestions: NextActionSuggestion[] = [];
+    const thoughts = Array.from(tree.thoughts.values());
+    const stats = this.getTreeStats(treeId);
+
+    // Count thoughts by state
+    const pendingThoughts = thoughts.filter(t => t.state === 'pending');
+    const evaluatedThoughts = thoughts.filter(t => t.state === 'evaluated');
+    const selectedThoughts = thoughts.filter(t => t.state === 'selected');
+    const prunedThoughts = thoughts.filter(t => t.state === 'pruned');
+    const verifiedThoughts = thoughts.filter(t => t.verified);
+
+    // Count low evaluation thoughts
+    const lowEvalThoughts = evaluatedThoughts.filter(t => t.evaluation !== null && t.evaluation < 40);
+    const highRiskThoughts = evaluatedThoughts.filter(t => t.risk !== null && t.risk !== undefined && t.risk > 70);
+
+    // Check if approaching max depth
+    if (!stats) {
+      return [];
+    }
+    const depthProgress = stats.maxDepthReached / tree.maxDepth;
+    const nearMaxDepth = depthProgress > 0.8;
+
+    // Get best thoughts
+    const bestThoughts = this.getBestThoughts(treeId, 3, 'evaluation');
+
+    // Suggestion 1: Generate children from best thought if there are pending thoughts
+    if (bestThoughts.length > 0 && pendingThoughts.length > 0) {
+      const bestThought = bestThoughts[0];
+      suggestions.push({
+        action: 'generate_and_evaluate_children',
+        targetThoughtId: bestThought.id,
+        reason: `There are ${pendingThoughts.length} pending thoughts. Generating and evaluating children from the current best thought (eval: ${bestThought.evaluation}) can help explore more promising directions.`,
+        priority: 'high'
+      });
+    }
+
+    // Suggestion 2: Prune low-value thoughts
+    if (lowEvalThoughts.length > 3) {
+      suggestions.push({
+        action: 'prune_tree',
+        reason: `${lowEvalThoughts.length} thoughts have evaluation below 40. Pruning low-value thoughts can reduce noise and improve focus.`,
+        priority: lowEvalThoughts.length > 10 ? 'high' : 'medium'
+      });
+    }
+
+    // Suggestion 3: Evaluate pending thoughts
+    if (pendingThoughts.length > 0) {
+      suggestions.push({
+        action: 'evaluate_thought',
+        targetThoughtId: pendingThoughts[0].id,
+        reason: `${pendingThoughts.length} thoughts are pending evaluation. Evaluating them will provide data for better decision-making.`,
+        priority: pendingThoughts.length > 5 ? 'high' : 'medium'
+      });
+    }
+
+    // Suggestion 4: Verify good thoughts for selection
+    const unverifiedGoodThoughts = evaluatedThoughts.filter(
+      t => !t.verified && t.evaluation !== null && t.evaluation > 60
+    );
+    if (unverifiedGoodThoughts.length > 0) {
+      suggestions.push({
+        action: 'verify_thought',
+        targetThoughtId: unverifiedGoodThoughts[0].id,
+        reason: `${unverifiedGoodThoughts.length} good thoughts (eval > 60) are not yet verified. Verification is required before selection.`,
+        priority: 'high'
+      });
+    }
+
+    // Suggestion 5: Select verified thoughts
+    const verifiedUnselectedThoughts = verifiedThoughts.filter(t => t.state !== 'selected');
+    if (verifiedUnselectedThoughts.length > 0) {
+      suggestions.push({
+        action: 'select_thought',
+        targetThoughtId: verifiedUnselectedThoughts[0].id,
+        reason: `${verifiedUnselectedThoughts.length} verified thoughts are not yet selected. Selecting the best one marks it for further exploration.`,
+        priority: 'medium'
+      });
+    }
+
+    // Suggestion 6: Backtrack if near max depth with no good solutions
+    if (nearMaxDepth && bestThoughts.length > 0 && (bestThoughts[0].evaluation || 0) < 70) {
+      suggestions.push({
+        action: 'backtrack',
+        targetThoughtId: bestThoughts[0].id,
+        reason: `Near max depth (${stats.maxDepthReached}/${tree.maxDepth}) but best evaluation is only ${bestThoughts[0].evaluation}. Consider backtracking to explore alternative branches.`,
+        priority: 'medium'
+      });
+    }
+
+    // Suggestion 7: Refine low-evaluated thoughts
+    if (evaluatedThoughts.length > 0 && stats.averageEvaluation < 50) {
+      const lowEvalThought = evaluatedThoughts
+        .filter(t => t.evaluation !== null)
+        .sort((a, b) => (a.evaluation || 0) - (b.evaluation || 0))[0];
+      if (lowEvalThought && this.config.llmProvider?.refineThought) {
+        suggestions.push({
+          action: 'refine_thought',
+          targetThoughtId: lowEvalThought.id,
+          reason: `Average evaluation is ${stats.averageEvaluation.toFixed(1)}. Refining low-evaluated thoughts may improve their quality.`,
+          priority: 'low'
+        });
+      }
+    }
+
+    // Suggestion 8: Self-reflect on best thought for improvement
+    if (bestThoughts.length > 0 && this.config.llmProvider?.selfReflect) {
+      suggestions.push({
+        action: 'self_reflect_thought',
+        targetThoughtId: bestThoughts[0].id,
+        reason: 'Self-reflection on the best thought can identify areas for improvement and generate better alternatives.',
+        priority: 'low'
+      });
+    }
+
+    // Suggestion 9: Address high-risk thoughts
+    if (highRiskThoughts.length > 0) {
+      suggestions.push({
+        action: 'prune_tree',
+        reason: `${highRiskThoughts.length} thoughts have high risk (>70). Consider pruning by risk threshold to focus on safer options.`,
+        priority: 'medium'
+      });
+    }
+
+    // Suggestion 10: Use exploration strategy if tree is large
+    if (thoughts.length > 20 && !nearMaxDepth) {
+      suggestions.push({
+        action: 'explore_with_strategy',
+        reason: `Tree has ${thoughts.length} thoughts. Using a systematic exploration strategy (BFS, DFS, beam, or best-first) can efficiently traverse the space.`,
+        priority: 'low'
+      });
+    }
+
+    // If focusThoughtId is provided, prioritize suggestions related to it
+    if (focusThoughtId) {
+      const focusThought = tree.thoughts.get(focusThoughtId);
+      if (focusThought) {
+        suggestions.sort((a, b) => {
+          const aMatches = a.targetThoughtId === focusThoughtId ? 1 : 0;
+          const bMatches = b.targetThoughtId === focusThoughtId ? 1 : 0;
+          return bMatches - aMatches;
+        });
+      }
+    }
+
+    // Sort by priority and return limited results
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    suggestions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
+    return suggestions.slice(0, maxSuggestions);
   }
 
   exploreWithStrategy(params: ExploreWithStrategyParams): ExplorationResult {
