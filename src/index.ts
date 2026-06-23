@@ -659,7 +659,7 @@ class ToTMCPServer {
           },
           {
             name: 'suggest_next_actions',
-            description: 'Get smart, context-aware recommendations about what to do next in a Tree of Thoughts session',
+            description: "Use this tool when you are unsure what to do next in the Tree of Thoughts process. It analyzes the current state of the tree (pending thoughts, low evaluations, high risk branches, depth progress, etc.) and returns prioritized, actionable recommendations such as: generate children, evaluate thoughts, prune low-value branches, verify good thoughts, backtrack, or use exploration strategies. Call this tool proactively when the tree feels stuck, has many pending items, or you need guidance on the best next step.",
             inputSchema: {
               type: 'object',
               properties: {
