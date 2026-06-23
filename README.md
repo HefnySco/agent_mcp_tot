@@ -1,29 +1,31 @@
-# Tree of Thoughts (ToT) MCP Server
+# 🌳 Tree of Thoughts (ToT) MCP Server
 
-A Model Context Protocol (MCP) server implementing the Tree of Thoughts framework for structured reasoning and decision tree exploration. This server enables LLMs to explore multiple reasoning paths, evaluate them, and backtrack when needed.
+**Tree of Thoughts (ToT)** is a powerful reasoning framework that enables AI models to explore multiple solution paths systematically. Think of it as a decision tree for thoughts—your AI can generate different approaches, evaluate them, backtrack when stuck, and focus on the most promising paths. Perfect for complex problem-solving, strategic planning, and multi-step reasoning tasks.
 
-## Features
+Whether you're solving puzzles, planning projects, or exploring creative alternatives, ToT provides structured exploration with evaluation scores, pruning strategies, and persistent storage for tracking reasoning over time.
 
-- **Thought Trees**: Create hierarchical thought structures with parent-child relationships
-- **Evaluation**: Score thoughts to guide exploration toward promising paths
-- **Backtracking**: Mark thought branches as pruned and explore alternatives
-- **Pruning**: Automatically remove low-scoring branches
-- **Best Path Selection**: Identify and select the most promising thoughts
-- **Persistent Storage**: Save and load thought trees across sessions with atomic writes and error handling
-- **Statistics**: Track tree metrics (depth, evaluations, pruning rates)
-- **Branching Strategies**: Systematic exploration using BFS, DFS, beam search, and best-first search
-- **LLM Integration**: Optional LLM provider for automated thought generation with strict mode support
-- **Robust Traversal**: Iterative implementations for handling very deep trees without recursion limits
-- **Schema Validation**: Input validation for all tool parameters
+## ✨ Features
 
-## Installation
+- **🌲 Thought Trees** - Create hierarchical thought structures with parent-child relationships
+- **📊 Evaluation** - Score thoughts to guide exploration toward promising paths
+- **↩️ Backtracking** - Mark thought branches as pruned and explore alternatives
+- **✂️ Pruning** - Automatically remove low-scoring branches
+- **🏆 Best Path Selection** - Identify and select the most promising thoughts
+- **💾 Persistent Storage** - Save and load thought trees across sessions with atomic writes and error handling
+- **📈 Statistics** - Track tree metrics (depth, evaluations, pruning rates)
+- **🔍 Branching Strategies** - Systematic exploration using BFS, DFS, beam search, and best-first search
+- **🤖 LLM Integration** - Optional LLM provider for automated thought generation with strict mode support
+- **🛡️ Robust Traversal** - Iterative implementations for handling very deep trees without recursion limits
+- **✅ Schema Validation** - Input validation for all tool parameters
+
+## 🚀 Installation
 
 ```bash
 npm install
 npm run build
 ```
 
-## Configuration
+## ⚙️ Configuration
 
 Add to your MCP client configuration (e.g., `mcp.json`):
 
@@ -39,6 +41,38 @@ Add to your MCP client configuration (e.g., `mcp.json`):
       }
     }
   }
+}
+```
+
+## 🎯 Quick Start
+
+### Basic Example
+
+Create a tree to solve a problem:
+```json
+{
+  "goal": "Solve the 24 game with numbers [3, 8, 8, 8]",
+  "rootContent": "Start with the numbers 3, 8, 8, 8",
+  "maxDepth": 5
+}
+```
+
+Add child thoughts with different approaches:
+```json
+{
+  "treeId": "tree-123",
+  "parentId": "thought-456",
+  "content": "Try multiplying 8 * 8 = 64, then 64 / 8 = 8, then 8 * 3 = 24"
+}
+```
+
+Evaluate thoughts to guide exploration:
+```json
+{
+  "treeId": "tree-123",
+  "thoughtId": "thought-789",
+  "score": 0.95,
+  "reasoning": "This approach successfully reaches the target of 24"
 }
 ```
 
@@ -117,11 +151,11 @@ const childrenWithJudge = await service.generateChildrenAndEvaluate({
 
 This method requires an LLM provider to be configured.
 
-## Available Tools
+## 🛠️ Available Tools
 
 ### Tree Management
 
-#### `create_tree`
+### `create_tree`
 Create a new Tree of Thoughts with a root thought and goal.
 
 **Parameters:**
@@ -130,25 +164,16 @@ Create a new Tree of Thoughts with a root thought and goal.
 - `maxDepth` (number, optional): Maximum depth of the tree (default: 10)
 - `metadata` (object, optional): Optional metadata for the tree
 
-**Example:**
-```json
-{
-  "goal": "Solve the 24 game with numbers [3, 8, 8, 8]",
-  "rootContent": "Start with the numbers 3, 8, 8, 8",
-  "maxDepth": 5
-}
-```
-
-#### `get_tree`
+### `get_tree`
 Get a tree by ID.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree to retrieve
 
-#### `list_trees`
+### `list_trees`
 List all trees.
 
-#### `delete_tree`
+### `delete_tree`
 Delete a tree by ID.
 
 **Parameters:**
@@ -156,7 +181,7 @@ Delete a tree by ID.
 
 ### Thought Operations
 
-#### `add_child`
+### `add_child`
 Add a child thought to an existing thought.
 
 **Parameters:**
@@ -165,16 +190,7 @@ Add a child thought to an existing thought.
 - `content` (string, required): The content of the child thought
 - `metadata` (object, optional): Optional metadata for the thought
 
-**Example:**
-```json
-{
-  "treeId": "tree-123",
-  "parentId": "thought-456",
-  "content": "Try multiplying 8 * 8 = 64, then 64 / 8 = 8, then 8 * 3 = 24"
-}
-```
-
-#### `evaluate_thought`
+### `evaluate_thought`
 Evaluate a thought with a score.
 
 **Parameters:**
@@ -183,31 +199,21 @@ Evaluate a thought with a score.
 - `score` (number, required): The evaluation score (e.g., 0-1 or 0-100)
 - `reasoning` (string, optional): Optional reasoning for the evaluation
 
-**Example:**
-```json
-{
-  "treeId": "tree-123",
-  "thoughtId": "thought-789",
-  "score": 0.95,
-  "reasoning": "This approach successfully reaches the target of 24"
-}
-```
-
-#### `select_thought`
+### `select_thought`
 Mark a thought as selected for further exploration.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree
 - `thoughtId` (string, required): The ID of the thought to select
 
-#### `backtrack`
+### `backtrack`
 Backtrack from a thought, marking all descendants as pruned.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree
 - `thoughtId` (string, required): The ID of the thought to backtrack from
 
-#### `prune_tree`
+### `prune_tree`
 Prune thoughts below a certain evaluation threshold.
 
 **Parameters:**
@@ -216,27 +222,27 @@ Prune thoughts below a certain evaluation threshold.
 
 ### Query Operations
 
-#### `get_thought`
+### `get_thought`
 Get a specific thought by ID.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree
 - `thoughtId` (string, required): The ID of the thought to retrieve
 
-#### `get_tree_structure`
+### `get_tree_structure`
 Get the hierarchical structure of a tree.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree
 
-#### `get_best_thoughts`
+### `get_best_thoughts`
 Get the best evaluated thoughts in a tree.
 
 **Parameters:**
 - `treeId` (string, required): The ID of the tree
 - `limit` (number, optional): Maximum number of thoughts to return (default: 5)
 
-#### `get_tree_stats`
+### `get_tree_stats`
 Get statistics about a tree.
 
 **Parameters:**
@@ -252,16 +258,16 @@ Get statistics about a tree.
 
 ### System Operations
 
-#### `clear_all`
+### `clear_all`
 Clear all trees.
 
-#### `save_state`
+### `save_state`
 Manually save the current state to storage.
 
-#### `get_version`
+### `get_version`
 Get the version information of this ToT MCP server.
 
-#### `explore_with_strategy`
+### `explore_with_strategy`
 Explore a thought tree using a systematic branching strategy.
 
 **Parameters:**
@@ -274,19 +280,6 @@ Explore a thought tree using a systematic branching strategy.
   - `maxDepth` (number): Stop when reaching this depth
   - `targetThoughtCount` (number): Stop when exploring this many thoughts
 
-**Example:**
-```json
-{
-  "treeId": "tree-123",
-  "strategy": "bfs",
-  "maxThoughts": 50,
-  "stopCriteria": {
-    "minEvaluation": 0.9,
-    "maxDepth": 5
-  }
-}
-```
-
 **Returns:**
 - `thoughtsExplored`: Number of thoughts explored
 - `thoughtsCreated`: Number of thoughts created during exploration
@@ -295,7 +288,7 @@ Explore a thought tree using a systematic branching strategy.
 - `bestEvaluation`: Evaluation score of the best thought
 - `stoppedReason`: Reason why exploration stopped
 
-## Usage Example
+## 📖 Usage Example
 
 Here's a typical workflow for solving a problem using ToT:
 
@@ -308,7 +301,7 @@ Here's a typical workflow for solving a problem using ToT:
 7. **Prune** low-scoring branches to focus resources
 8. **Review the tree structure** to understand the reasoning path
 
-## Data Structures
+## 📊 Data Structures
 
 ### Thought
 ```typescript
@@ -339,7 +332,7 @@ Here's a typical workflow for solving a problem using ToT:
 }
 ```
 
-## Storage
+## 💾 Storage
 
 Thought trees are persisted to `tot-storage.json` in JSON format. The storage mechanism uses:
 
@@ -350,6 +343,6 @@ Thought trees are persisted to `tot-storage.json` in JSON format. The storage me
 
 Logs of tool calls are stored in the `output` directory with daily rotation.
 
-## License
+## 📄 License
 
 MIT
