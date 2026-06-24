@@ -9,6 +9,7 @@ import {
 import { ToTService, ToTServiceConfig } from './totService.js';
 import { MockLLMProvider } from './llm-providers/mock-llm-provider.js';
 import { GrokLLMProvider } from './llm-providers/grok-llm-provider.js';
+import { OllamaLLMProvider } from './llm-providers/ollama-llm-provider.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -25,6 +26,8 @@ const logger = {
 function createLLMProvider(): ToTServiceConfig {
   const providerType = process.env.LLM_PROVIDER_TYPE || 'mock';
   const grokApiKey = process.env.GROK_API_KEY;
+  const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+  const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
 
   if (providerType === 'null' || providerType === 'none') {
     logger.info('Using no LLM provider (null)');
@@ -38,6 +41,11 @@ function createLLMProvider(): ToTServiceConfig {
     }
     logger.info('Using GrokLLMProvider');
     return { llmProvider: new GrokLLMProvider(grokApiKey) };
+  }
+
+  if (providerType === 'ollama') {
+    logger.info(`Using OllamaLLMProvider at ${ollamaBaseUrl} with model ${ollamaModel}`);
+    return { llmProvider: new OllamaLLMProvider(ollamaBaseUrl, ollamaModel) };
   }
 
   logger.info('Using MockLLMProvider');

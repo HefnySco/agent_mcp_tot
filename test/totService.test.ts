@@ -488,6 +488,31 @@ describe('ToTService', () => {
       assert.strictEqual(loadedTree.thoughts.size, 1);
     });
 
+    it('should create storage file if not found', async () => {
+      const newStoragePath = path.join(__dirname, 'test-new-storage.json');
+      try {
+        await fs.unlink(newStoragePath);
+      } catch (err) {
+        // File doesn't exist, that's fine
+      }
+
+      const newService = new ToTService(newStoragePath);
+      await newService.load();
+
+      // Verify file was created with empty structure
+      const data = await fs.readFile(newStoragePath, 'utf-8');
+      const parsed = JSON.parse(data);
+      assert.ok(parsed.trees);
+      assert.deepStrictEqual(parsed.trees, {});
+
+      // Cleanup
+      try {
+        await fs.unlink(newStoragePath);
+      } catch (err) {
+        // Ignore cleanup errors
+      }
+    });
+
     it('should handle corrupt storage file gracefully', async () => {
       await fs.writeFile(TEST_STORAGE_PATH, 'invalid json');
 

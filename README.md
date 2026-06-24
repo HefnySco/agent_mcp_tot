@@ -127,7 +127,27 @@ const config = { llmProvider, strictLLM: true };
 const service = new ToTService('./tot-storage.json', config);
 ```
 
-See `examples/llm-providers/grok-llm-provider.ts` for the full implementation. Remember to never hardcode API keys - use environment variables or secure configuration management.
+**Ollama LLM Provider** - Local LLM support using Ollama:
+```typescript
+import { OllamaLLMProvider } from './examples/llm-providers/ollama-llm-provider.js';
+
+const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
+const llmProvider = new OllamaLLMProvider(ollamaBaseUrl, ollamaModel);
+
+const config = { llmProvider, strictLLM: true };
+const service = new ToTService('./tot-storage.json', config);
+```
+
+To use Ollama:
+1. Install and start Ollama: https://ollama.ai
+2. Pull a model: `ollama pull llama2` (or any other model)
+3. Set environment variables:
+   - `LLM_PROVIDER_TYPE=ollama`
+   - `OLLAMA_BASE_URL=http://localhost:11434` (optional, default)
+   - `OLLAMA_MODEL=llama2` (optional, default)
+
+See `examples/llm-providers/grok-llm-provider.ts` and `examples/llm-providers/ollama-llm-provider.ts` for full implementations. Remember to never hardcode API keys - use environment variables or secure configuration management.
 
 #### Generate and Evaluate in One Step
 

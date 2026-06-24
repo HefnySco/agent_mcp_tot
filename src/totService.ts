@@ -230,7 +230,15 @@ export class ToTService {
       }
 
       logger.info(`Loaded ${this.trees.size} trees from storage`);
-    } catch (err) {
+    } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        // File doesn't exist yet — first run or was deleted. Create it with empty state.
+        logger.info(`Storage file not found at ${this.storagePath}. Creating new empty storage.`);
+        this.trees = new Map();
+        await this.save(); // ← This creates the file
+        return;
+      }
+
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Failed to load ToT service state: ${message}. Starting with empty state.`);
       this.trees = new Map();
