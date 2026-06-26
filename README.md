@@ -100,7 +100,7 @@ const server = new ToTMCPServer(config);
 
 #### Using with LLM Providers
 
-The ToT service includes example LLM provider implementations in the `src/llm-providers/` directory:
+The ToT service includes LLM provider implementations in the `src/llm-providers/` directory:
 
 **Mock LLM Provider** - A simple mock implementation for testing:
 ```typescript
@@ -116,7 +116,7 @@ const config = { llmProvider, strictLLM: false };
 const service = new ToTService('./tot-storage.json', config);
 ```
 
-**Grok LLM Provider** - Example implementation using xAI's Grok API (commented by default):
+**Grok LLM Provider** - Implementation using xAI's Grok API:
 ```typescript
 import { GrokLLMProvider } from './src/llm-providers/grok-llm-provider.js';
 
