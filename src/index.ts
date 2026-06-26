@@ -13,15 +13,14 @@ import { OllamaLLMProvider } from './llm-providers/ollama-llm-provider.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from './utils/logger.js';
+import * as treeHandlers from './handlers/treeHandlers.js';
+import * as thoughtHandlers from './handlers/thoughtHandlers.js';
+import * as queryHandlers from './handlers/queryHandlers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-const logger = {
-  info: (message: string) => console.log(`[ToTServer] ${message}`),
-  error: (message: string) => console.error(`[ToTServer] ${message}`),
-  warn: (message: string) => console.warn(`[ToTServer] ${message}`)
-};
 
 function createLLMProvider(): ToTServiceConfig {
   const providerType = process.env.LLM_PROVIDER_TYPE || 'mock';
@@ -144,6 +143,10 @@ class ToTMCPServer {
                   description: 'Maximum depth of the tree (default: 10)',
                   minimum: 1
                 },
+                sessionId: {
+                  type: 'string',
+                  description: 'Optional session ID for context maintenance and grouping related trees'
+                },
                 metadata: {
                   type: 'object',
                   description: 'Optional metadata for the tree'
@@ -205,6 +208,10 @@ class ToTMCPServer {
                 content: {
                   type: 'string',
                   description: 'The content of the child thought'
+                },
+                sessionId: {
+                  type: 'string',
+                  description: 'Optional session ID for context maintenance'
                 },
                 metadata: {
                   type: 'object',
@@ -687,6 +694,48 @@ class ToTMCPServer {
               },
               required: ['treeId']
             }
+          },
+          {
+            name: 'list_trees_by_session',
+            description: 'List all trees associated with a specific session ID for context maintenance',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sessionId: {
+                  type: 'string',
+                  description: 'The session ID to filter trees by'
+                }
+              },
+              required: ['sessionId']
+            }
+          },
+          {
+            name: 'delete_session_trees',
+            description: 'Delete all trees and thoughts associated with a specific session ID for cleanup',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sessionId: {
+                  type: 'string',
+                  description: 'The session ID to delete trees for'
+                }
+              },
+              required: ['sessionId']
+            }
+          },
+          {
+            name: 'get_session_context',
+            description: 'Get all thoughts across all trees for a specific session ID to understand the full context',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                sessionId: {
+                  type: 'string',
+                  description: 'The session ID to get context for'
+                }
+              },
+              required: ['sessionId']
+            }
           }
         ]
       };
@@ -699,482 +748,47 @@ class ToTMCPServer {
 
       try {
         switch (name) {
-          case 'create_tree': {
-            const goal = args?.goal as string;
-            const rootContent = args?.rootContent as string;
-            const maxDepth = args?.maxDepth as number | undefined;
-            const metadata = args?.metadata as Record<string, any> | undefined;
+          case 'create_tree':
+            return treeHandlers.handleCreateTree(this.totService, args, this.logRequest.bind(this));
 
-            if (!goal || !rootContent) {
-              throw new Error('goal and rootContent are required');
-            }
+          case 'get_tree':
+            return treeHandlers.handleGetTree(this.totService, args, this.logRequest.bind(this));
 
-            const tree = this.totService.createTree({
-              goal,
-              rootContent,
-              maxDepth,
-              metadata
-            });
+          case 'list_trees':
+            return treeHandlers.handleListTrees(this.totService, args, this.logRequest.bind(this));
 
-            await this.totService.save();
+          case 'delete_tree':
+            return treeHandlers.handleDeleteTree(this.totService, args, this.logRequest.bind(this));
 
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Tree created successfully',
-                    tree: {
-                      id: tree.id,
-                      goal: tree.goal,
-                      rootId: tree.rootId,
-                      maxDepth: tree.maxDepth
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
+          case 'add_child':
+            return thoughtHandlers.handleAddChild(this.totService, args, this.logRequest.bind(this));
 
-          case 'get_tree': {
-            const treeId = args?.treeId as string;
-            if (!treeId) {
-              throw new Error('treeId is required');
-            }
+          case 'evaluate_thought':
+            return thoughtHandlers.handleEvaluateThought(this.totService, args, this.logRequest.bind(this));
 
-            const tree = this.totService.getTree(treeId);
-            
-            if (!tree) {
-              throw new Error('Tree not found');
-            }
+          case 'verify_thought':
+            return thoughtHandlers.handleVerifyThought(this.totService, args, this.logRequest.bind(this));
 
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    tree: {
-                      id: tree.id,
-                      goal: tree.goal,
-                      rootId: tree.rootId,
-                      maxDepth: tree.maxDepth,
-                      createdAt: tree.createdAt,
-                      updatedAt: tree.updatedAt,
-                      thoughtCount: tree.thoughts.size
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
+          case 'select_thought':
+            return thoughtHandlers.handleSelectThought(this.totService, args, this.logRequest.bind(this));
 
-          case 'list_trees': {
-            const trees = this.totService.getAllTrees();
+          case 'backtrack':
+            return thoughtHandlers.handleBacktrack(this.totService, args, this.logRequest.bind(this));
 
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    trees: trees.map(t => ({
-                      id: t.id,
-                      goal: t.goal,
-                      rootId: t.rootId,
-                      maxDepth: t.maxDepth,
-                      thoughtCount: t.thoughts.size,
-                      createdAt: t.createdAt,
-                      updatedAt: t.updatedAt
-                    })),
-                    count: trees.length
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
+          case 'prune_tree':
+            return thoughtHandlers.handlePruneTree(this.totService, args, this.logRequest.bind(this));
 
-          case 'delete_tree': {
-            const treeId = args?.treeId as string;
-            if (!treeId) {
-              throw new Error('treeId is required');
-            }
+          case 'get_thought':
+            return queryHandlers.handleGetThought(this.totService, args, this.logRequest.bind(this));
 
-            const deleted = this.totService.deleteTree(treeId);
-            
-            if (!deleted) {
-              throw new Error('Tree not found');
-            }
+          case 'get_tree_structure':
+            return queryHandlers.handleGetTreeStructure(this.totService, args, this.logRequest.bind(this));
 
-            await this.totService.save();
+          case 'get_best_thoughts':
+            return queryHandlers.handleGetBestThoughts(this.totService, args, this.logRequest.bind(this));
 
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Tree deleted successfully',
-                    treeId
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'add_child': {
-            const treeId = args?.treeId as string;
-            const parentId = args?.parentId as string;
-            const content = args?.content as string;
-            const metadata = args?.metadata as Record<string, any> | undefined;
-
-            if (!treeId || !parentId || !content) {
-              throw new Error('treeId, parentId, and content are required');
-            }
-
-            const thought = this.totService.addChildThought({
-              treeId,
-              parentId,
-              content,
-              metadata
-            });
-            
-            if (!thought) {
-              throw new Error('Tree or parent thought not found');
-            }
-
-            await this.totService.save();
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Child thought added successfully',
-                    thought: {
-                      id: thought.id,
-                      content: thought.content,
-                      parentId: thought.parentId,
-                      depth: thought.depth
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'evaluate_thought': {
-            const treeId = args?.treeId as string;
-            const thoughtId = args?.thoughtId as string;
-            const score = args?.score as number;
-            const creativity = args?.creativity as number | undefined;
-            const risk = args?.risk as number | undefined;
-            const criteriaScores = args?.criteriaScores as Record<string, number> | undefined;
-            const reasoning = args?.reasoning as string | undefined;
-
-            if (!treeId || !thoughtId || score === undefined) {
-              throw new Error('treeId, thoughtId, and score are required');
-            }
-
-            const thought = this.totService.evaluateThought({
-              treeId,
-              thoughtId,
-              score,
-              creativity,
-              risk,
-              criteriaScores,
-              reasoning
-            });
-            
-            if (!thought) {
-              throw new Error('Tree or thought not found');
-            }
-
-            await this.totService.save();
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Thought evaluated successfully',
-                    thought: {
-                      id: thought.id,
-                      content: thought.content,
-                      evaluation: thought.evaluation,
-                      state: thought.state
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'verify_thought': {
-            const treeId = args?.treeId as string;
-            const thoughtId = args?.thoughtId as string;
-            const verificationNotes = args?.verificationNotes as string | undefined;
-
-            if (!treeId || !thoughtId) {
-              throw new Error('treeId and thoughtId are required');
-            }
-
-            const thought = this.totService.verifyThought({
-              treeId,
-              thoughtId,
-              verificationNotes
-            });
-
-            if (!thought) {
-              throw new Error('Tree or thought not found');
-            }
-
-            await this.totService.save();
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Thought verified successfully',
-                    thought: {
-                      id: thought.id,
-                      content: thought.content,
-                      verified: thought.verified,
-                      verificationNotes: thought.verificationNotes,
-                      state: thought.state
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'select_thought': {
-            const treeId = args?.treeId as string;
-            const thoughtId = args?.thoughtId as string;
-
-            if (!treeId || !thoughtId) {
-              throw new Error('treeId and thoughtId are required');
-            }
-
-            const thought = this.totService.selectThought({
-              treeId,
-              thoughtId
-            });
-            
-            if (!thought) {
-              throw new Error('Tree or thought not found');
-            }
-
-            await this.totService.save();
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Thought selected successfully',
-                    thought: {
-                      id: thought.id,
-                      content: thought.content,
-                      state: thought.state
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'backtrack': {
-            const treeId = args?.treeId as string;
-            const thoughtId = args?.thoughtId as string;
-
-            if (!treeId || !thoughtId) {
-              throw new Error('treeId and thoughtId are required');
-            }
-
-            const thought = this.totService.backtrack({
-              treeId,
-              thoughtId
-            });
-            
-            if (!thought) {
-              throw new Error('Tree or thought not found');
-            }
-
-            await this.totService.save();
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Backtrack successful',
-                    thought: {
-                      id: thought.id,
-                      content: thought.content,
-                      state: thought.state
-                    }
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'prune_tree': {
-            const treeId = args?.treeId as string;
-            const threshold = args?.threshold as number;
-            const riskThreshold = args?.riskThreshold as number | undefined;
-
-            if (!treeId || threshold === undefined) {
-              throw new Error('treeId and threshold are required');
-            }
-
-            const result = this.totService.pruneTree({
-              treeId,
-              threshold,
-              riskThreshold
-            });
-
-            await this.totService.save();
-
-            const output = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    message: 'Tree pruned successfully',
-                    ...result
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, output);
-            return output;
-          }
-
-          case 'get_thought': {
-            const treeId = args?.treeId as string;
-            const thoughtId = args?.thoughtId as string;
-
-            if (!treeId || !thoughtId) {
-              throw new Error('treeId and thoughtId are required');
-            }
-
-            const thought = this.totService.getThought(treeId, thoughtId);
-            
-            if (!thought) {
-              throw new Error('Tree or thought not found');
-            }
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    thought
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'get_tree_structure': {
-            const treeId = args?.treeId as string;
-            if (!treeId) {
-              throw new Error('treeId is required');
-            }
-
-            const structure = this.totService.getTreeStructure(treeId);
-            
-            if (!structure) {
-              throw new Error('Tree not found');
-            }
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    structure
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'get_best_thoughts': {
-            const treeId = args?.treeId as string;
-            const limit = args?.limit as number | undefined;
-            const sortBy = args?.sortBy as 'evaluation' | 'creativity' | 'risk' | 'combined' | undefined;
-
-            if (!treeId) {
-              throw new Error('treeId is required');
-            }
-
-            const thoughts = this.totService.getBestThoughts(treeId, limit, sortBy);
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    thoughts,
-                    count: thoughts.length
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
-
-          case 'get_tree_stats': {
-            const treeId = args?.treeId as string;
-            if (!treeId) {
-              throw new Error('treeId is required');
-            }
-
-            const stats = this.totService.getTreeStats(treeId);
-            
-            if (!stats) {
-              throw new Error('Tree not found');
-            }
-
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    treeId,
-                    stats
-                  }, null, 2)
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
-          }
+          case 'get_tree_stats':
+            return queryHandlers.handleGetTreeStats(this.totService, args, this.logRequest.bind(this));
 
           case 'clear_all': {
             this.totService.clearAll();
@@ -1546,6 +1160,103 @@ class ToTMCPServer {
             return result;
           }
 
+          case 'list_trees_by_session': {
+            const sessionId = args?.sessionId as string;
+            if (!sessionId) {
+              throw new Error('sessionId is required');
+            }
+
+            const trees = this.totService.getTreesBySession(sessionId);
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Trees retrieved successfully',
+                    sessionId,
+                    trees: trees.map(t => ({
+                      id: t.id,
+                      goal: t.goal,
+                      rootId: t.rootId,
+                      maxDepth: t.maxDepth,
+                      thoughtCount: t.thoughts.size,
+                      createdAt: t.createdAt,
+                      updatedAt: t.updatedAt
+                    })),
+                    count: trees.length
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'delete_session_trees': {
+            const sessionId = args?.sessionId as string;
+            if (!sessionId) {
+              throw new Error('sessionId is required');
+            }
+
+            const deletedCount = this.totService.deleteSession(sessionId);
+            await this.totService.save();
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Session trees deleted successfully',
+                    sessionId,
+                    deletedCount
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'get_session_context': {
+            const sessionId = args?.sessionId as string;
+            if (!sessionId) {
+              throw new Error('sessionId is required');
+            }
+
+            const thoughts = this.totService.getThoughtsBySession(sessionId);
+            const trees = this.totService.getTreesBySession(sessionId);
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Session context retrieved successfully',
+                    sessionId,
+                    trees: trees.map(t => ({
+                      id: t.id,
+                      goal: t.goal,
+                      thoughtCount: t.thoughts.size
+                    })),
+                    thoughts: thoughts.map(t => ({
+                      id: t.id,
+                      content: t.content,
+                      treeId: trees.find(tree => tree.thoughts.has(t.id))?.id,
+                      evaluation: t.evaluation,
+                      state: t.state,
+                      depth: t.depth
+                })),
+                totalThoughts: thoughts.length,
+                totalTrees: trees.length
+              }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -1581,5 +1292,11 @@ class ToTMCPServer {
   }
 }
 
-const server = new ToTMCPServer();
-server.run().catch(err => logger.error(`Server error: ${err instanceof Error ? err.message : String(err)}`));
+// Only start the server when this file is executed directly (not when imported by tests)
+if (import.meta.url === `file://${process.argv[1]}` || 
+    import.meta.url === process.argv[1] ||
+    import.meta.url.startsWith('file://') && 
+    import.meta.url.slice(7) === process.argv[1]) {
+  const server = new ToTMCPServer();
+  server.run().catch(err => logger.error(`Server error: ${err instanceof Error ? err.message : String(err)}`));
+}

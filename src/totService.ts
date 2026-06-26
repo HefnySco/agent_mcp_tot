@@ -2,6 +2,7 @@ import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, Select
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { validateRequiredString, validateSessionId, validateEvaluationScore, validateNumberRange } from './utils/validators.js';
 
 const logger = {
   info: (message: string) => console.log(`[ToTService] ${message}`),
@@ -90,7 +91,7 @@ export class ToTService {
    * Build rich context for thought generation
    * Includes tree goal, parent thought, ancestor path, siblings, best thoughts, and statistics
    */
-  private buildRichContextForGeneration(tree: Tree, parentThought: Thought, numChildren?: number): string {
+  private buildRichContextForGeneration(tree: Tree, parentThought: Thought, numChildren?: number, sessionId?: string): string {
     const lines: string[] = [];
 
     // Tree goal and configuration
@@ -98,6 +99,23 @@ export class ToTService {
     lines.push(`Goal: ${tree.goal}`);
     lines.push(`Max Depth: ${tree.maxDepth}`);
     lines.push(`Number of children to generate: ${numChildren || 3}`);
+    
+    // Include session context if sessionId is provided
+    if (sessionId) {
+      const sessionTrees = this.getTreesBySession(sessionId);
+      if (sessionTrees.length > 1) {
+        lines.push(`Session: ${sessionId} (${sessionTrees.length} trees in session)`);
+        // Include related goals from other trees in the session
+        const otherGoals = sessionTrees
+          .filter(t => t.id !== tree.id)
+          .map(t => t.goal)
+          .slice(0, 3);
+        if (otherGoals.length > 0) {
+          lines.push(`Related goals in session: ${otherGoals.join('; ')}`);
+        }
+      }
+    }
+    
     lines.push('');
 
     // Parent thought information
@@ -283,10 +301,32 @@ export class ToTService {
     }
   }
 
+  /**
+   * Create a new Tree of Thoughts for systematic reasoning
+   * This helps the LLM explore solution paths by maintaining a structured hierarchy of thoughts
+   * @param params - Tree creation parameters including goal, root content, and optional sessionId
+   * @returns The newly created tree with root thought
+   */
   createTree(params: CreateTreeParams): Tree {
+    // Validate sessionId if provided
+    if (params.sessionId !== undefined) {
+      if (typeof params.sessionId !== 'string') {
+        throw new Error('sessionId must be a string');
+      }
+      if (params.sessionId.trim() === '') {
+        throw new Error('sessionId cannot be empty');
+      }
+    }
+
     const treeId = uuidv4();
     const rootId = uuidv4();
     const now = new Date().toISOString();
+    
+    // Merge sessionId into metadata if provided for session-based context management
+    const treeMetadata = params.metadata ? { ...params.metadata } : {};
+    if (params.sessionId) {
+      treeMetadata.sessionId = params.sessionId;
+    }
     
     const rootThought: Thought = {
       id: rootId,
@@ -311,7 +351,7 @@ export class ToTService {
       createdAt: now,
       updatedAt: now,
       maxDepth: params.maxDepth || 10,
-      metadata: params.metadata
+      metadata: treeMetadata
     };
     
     this.trees.set(treeId, tree);
@@ -326,11 +366,72 @@ export class ToTService {
     return Array.from(this.trees.values());
   }
 
+  /**
+   * Get all trees associated with a specific session ID
+   * This enables session-based context management for long-running reasoning tasks
+   * @param sessionId - The session ID to filter trees by
+   * @returns Array of trees belonging to the session
+   */
+  getTreesBySession(sessionId: string): Tree[] {
+    return Array.from(this.trees.values()).filter(
+      tree => tree.metadata?.sessionId === sessionId
+    );
+  }
+
+  /**
+   * Get all thoughts across all trees for a specific session ID
+   * Provides holistic context of all reasoning within a session
+   * @param sessionId - The session ID to get thoughts for
+   * @returns Array of all thoughts in the session
+   */
+  getThoughtsBySession(sessionId: string): Thought[] {
+    const thoughts: Thought[] = [];
+    for (const tree of this.trees.values()) {
+      if (tree.metadata?.sessionId === sessionId) {
+        thoughts.push(...Array.from(tree.thoughts.values()));
+      }
+    }
+    return thoughts;
+  }
+
+  /**
+   * Delete all trees and thoughts associated with a specific session ID
+   * Useful for cleanup when a session is complete or no longer needed
+   * @param sessionId - The session ID to delete trees for
+   * @returns Number of trees deleted
+   */
+  deleteSession(sessionId: string): number {
+    let deletedCount = 0;
+    const treesToDelete = this.getTreesBySession(sessionId);
+    
+    for (const tree of treesToDelete) {
+      this.trees.delete(tree.id);
+      deletedCount++;
+    }
+    
+    return deletedCount;
+  }
+
   deleteTree(treeId: string): boolean {
     return this.trees.delete(treeId);
   }
 
+  /**
+   * Add a child thought to an existing thought for deeper reasoning exploration
+   * This enables the LLM to branch into alternative solution paths
+   * @param params - Parameters including treeId, parentId, content, and optional sessionId
+   * @returns The newly created child thought
+   * @throws TreeNotFoundError if the tree doesn't exist
+   * @throws ThoughtNotFoundError if the parent thought doesn't exist
+   * @throws MaxDepthReachedError if the parent is at max depth
+   */
   addChildThought(params: AddChildParams): Thought | null {
+    // Light validation for direct service calls
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.parentId, 'parentId');
+    validateRequiredString(params.content, 'content');
+    validateSessionId(params.sessionId);
+
     const tree = this.trees.get(params.treeId);
     if (!tree) {
       throw new TreeNotFoundError(params.treeId);
@@ -348,6 +449,12 @@ export class ToTService {
     const childId = uuidv4();
     const now = new Date().toISOString();
     
+    // Merge sessionId into metadata if provided for session-based context management
+    const thoughtMetadata = params.metadata ? { ...params.metadata } : {};
+    if (params.sessionId) {
+      thoughtMetadata.sessionId = params.sessionId;
+    }
+    
     const childThought: Thought = {
       id: childId,
       content: params.content,
@@ -357,7 +464,7 @@ export class ToTService {
       state: 'pending',
       depth: parentThought.depth + 1,
       createdAt: now,
-      metadata: params.metadata
+      metadata: thoughtMetadata
     };
     
     parentThought.children.push(childId);
@@ -368,8 +475,16 @@ export class ToTService {
   }
 
   evaluateThought(params: EvaluateParams): Thought | null {
-    if (params.score < 0 || params.score > 100) {
-      throw new InvalidEvaluationError(params.score);
+    // Light validation for direct service calls
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.thoughtId, 'thoughtId');
+    validateEvaluationScore(params.score);
+
+    if (params.creativity !== undefined) {
+      validateNumberRange(params.creativity, 'creativity', 0, 100);
+    }
+    if (params.risk !== undefined) {
+      validateNumberRange(params.risk, 'risk', 0, 100);
     }
 
     const tree = this.trees.get(params.treeId);
@@ -506,16 +621,15 @@ export class ToTService {
       }
       
       // Prune if risk threshold is set and risk exceeds threshold
-      // Only apply risk-based pruning if the thought has a defined risk value
+      // Only apply risk-based pruning if the thought has a defined risk value AND is evaluated
+      // This check runs after evaluation threshold pruning, so we only prune if not already pruned
       if (params.riskThreshold !== undefined && 
+          thought.state === 'evaluated' &&
           thought.risk !== null && 
           thought.risk !== undefined && 
           thought.risk > params.riskThreshold) {
-        // Only prune if not already pruned by evaluation threshold
-        if (thought.state !== 'pruned') {
-          thought.state = 'pruned';
-          prunedCount++;
-        }
+        thought.state = 'pruned';
+        prunedCount++;
       }
       
       // Push children onto stack for processing
@@ -740,13 +854,34 @@ export class ToTService {
   }
 
   /**
-   * Suggest next actions based on the current state of the tree
-   * @param treeId - The ID of the tree to analyze
+   * Suggest next actions based on the current state of the tree or session
+   * When sessionId is provided, analyzes all trees in that session for holistic recommendations
+   * @param treeId - The ID of the tree to analyze (or primary tree if sessionId provided)
    * @param focusThoughtId - Optional thought ID to focus recommendations on
    * @param maxSuggestions - Maximum number of suggestions to return (default: 5)
+   * @param sessionId - Optional session ID to analyze all trees in the session
    * @returns Array of prioritized action suggestions
    */
-  suggestNextActions(treeId: string, focusThoughtId?: string, maxSuggestions: number = 5): NextActionSuggestion[] {
+  suggestNextActions(treeId: string, focusThoughtId?: string, maxSuggestions: number = 5, sessionId?: string): NextActionSuggestion[] {
+    // If sessionId provided, analyze all trees in the session for holistic context
+    if (sessionId) {
+      const sessionTrees = this.getTreesBySession(sessionId);
+      if (sessionTrees.length === 0) {
+        return [];
+      }
+      
+      // Aggregate suggestions across all trees in the session
+      const allSuggestions: NextActionSuggestion[] = [];
+      for (const tree of sessionTrees) {
+        const treeSuggestions = this.suggestNextActions(tree.id, focusThoughtId, maxSuggestions);
+        allSuggestions.push(...treeSuggestions);
+      }
+      
+      // Deduplicate and prioritize by session-level importance
+      return this.prioritizeSessionSuggestions(allSuggestions, maxSuggestions);
+    }
+
+    // Single tree analysis (original behavior)
     const tree = this.trees.get(treeId);
     if (!tree) {
       throw new TreeNotFoundError(treeId);
@@ -901,6 +1036,32 @@ export class ToTService {
     suggestions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
     return suggestions.slice(0, maxSuggestions);
+  }
+
+  /**
+   * Helper method to prioritize and deduplicate session-level suggestions
+   * @param suggestions - Array of suggestions from multiple trees
+   * @param maxSuggestions - Maximum number of suggestions to return
+   * @returns Deduplicated and prioritized suggestions
+   */
+  private prioritizeSessionSuggestions(suggestions: NextActionSuggestion[], maxSuggestions: number): NextActionSuggestion[] {
+    // Deduplicate by action type
+    const seen = new Set<string>();
+    const unique: NextActionSuggestion[] = [];
+    
+    for (const suggestion of suggestions) {
+      const key = `${suggestion.action}-${suggestion.targetThoughtId || ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(suggestion);
+      }
+    }
+    
+    // Sort by priority (high > medium > low)
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    unique.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+    
+    return unique.slice(0, maxSuggestions);
   }
 
   exploreWithStrategy(params: ExploreWithStrategyParams): ExplorationResult {
@@ -1295,7 +1456,8 @@ export class ToTService {
     let thoughtContents: string[] = [];
 
     if (this.config.llmProvider) {
-      const context = this.buildRichContextForGeneration(tree, parentThought, numChildren);
+      const sessionId = tree.metadata?.sessionId;
+      const context = this.buildRichContextForGeneration(tree, parentThought, numChildren, sessionId);
       const temperature = this.calculateTemperature(parentThought.depth, tree.maxDepth);
       thoughtContents = await this.config.llmProvider.generateThoughts(
         params.diversityPrompt || 'Generate diverse child thoughts',
@@ -1375,7 +1537,8 @@ export class ToTService {
 
       if (useLLMJudge && this.config.llmProvider) {
         // Build rich context for evaluation
-        const context = this.buildRichContextForGeneration(tree, thought, 1);
+        const sessionId = tree.metadata?.sessionId;
+        const context = this.buildRichContextForGeneration(tree, thought, 1, sessionId);
 
         // Prefer structured evaluation if available
         if (this.config.llmProvider.evaluateThoughtStructured) {

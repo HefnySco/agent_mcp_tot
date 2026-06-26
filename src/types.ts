@@ -41,6 +41,7 @@ export interface CreateTreeParams {
   goal: string;
   rootContent: string;
   maxDepth?: number;
+  sessionId?: string;
   metadata?: Record<string, any>;
 }
 
@@ -50,6 +51,7 @@ export interface AddChildParams {
   treeId: string;
   parentId: string;
   content: string;
+  sessionId?: string;
   metadata?: Record<string, any>;
 }
 
