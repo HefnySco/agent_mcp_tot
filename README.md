@@ -100,11 +100,11 @@ const server = new ToTMCPServer(config);
 
 #### Using with LLM Providers
 
-The ToT service includes example LLM provider implementations in the `examples/llm-providers/` directory:
+The ToT service includes example LLM provider implementations in the `src/llm-providers/` directory:
 
 **Mock LLM Provider** - A simple mock implementation for testing:
 ```typescript
-import { MockLLMProvider } from './examples/llm-providers/mock-llm-provider.js';
+import { MockLLMProvider } from './src/llm-providers/mock-llm-provider.js';
 
 const llmProvider = new MockLLMProvider([
   'Consider exploring the most promising path first',
@@ -118,7 +118,7 @@ const service = new ToTService('./tot-storage.json', config);
 
 **Grok LLM Provider** - Example implementation using xAI's Grok API (commented by default):
 ```typescript
-import { GrokLLMProvider } from './examples/llm-providers/grok-llm-provider.js';
+import { GrokLLMProvider } from './src/llm-providers/grok-llm-provider.js';
 
 const apiKey = process.env.GROK_API_KEY;
 const llmProvider = new GrokLLMProvider(apiKey);
@@ -129,7 +129,7 @@ const service = new ToTService('./tot-storage.json', config);
 
 **Ollama LLM Provider** - Local LLM support using Ollama:
 ```typescript
-import { OllamaLLMProvider } from './examples/llm-providers/ollama-llm-provider.js';
+import { OllamaLLMProvider } from './src/llm-providers/ollama-llm-provider.js';
 
 const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const ollamaModel = process.env.OLLAMA_MODEL || 'llama2';
@@ -147,7 +147,7 @@ To use Ollama:
    - `OLLAMA_BASE_URL=http://localhost:11434` (optional, default)
    - `OLLAMA_MODEL=llama2` (optional, default)
 
-See `examples/llm-providers/grok-llm-provider.ts` and `examples/llm-providers/ollama-llm-provider.ts` for full implementations. Remember to never hardcode API keys - use environment variables or secure configuration management.
+See `src/llm-providers/grok-llm-provider.ts` and `src/llm-providers/ollama-llm-provider.ts` for full implementations. Remember to never hardcode API keys - use environment variables or secure configuration management.
 
 #### Generate and Evaluate in One Step
 
