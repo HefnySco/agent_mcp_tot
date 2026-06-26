@@ -11,6 +11,7 @@ import { MockLLMProvider } from './llm-providers/mock-llm-provider.js';
 import { GrokLLMProvider } from './llm-providers/grok-llm-provider.js';
 import { OllamaLLMProvider } from './llm-providers/ollama-llm-provider.js';
 import fs from 'fs/promises';
+import { realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './utils/logger.js';
@@ -1293,10 +1294,15 @@ class ToTMCPServer {
 }
 
 // Only start the server when this file is executed directly (not when imported by tests)
-if (import.meta.url === `file://${process.argv[1]}` || 
-    import.meta.url === process.argv[1] ||
-    import.meta.url.startsWith('file://') && 
-    import.meta.url.slice(7) === process.argv[1]) {
+const isMainModule = (() => {
+  try {
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
+
+if (isMainModule) {
   const server = new ToTMCPServer();
   server.run().catch(err => logger.error(`Server error: ${err instanceof Error ? err.message : String(err)}`));
 }
