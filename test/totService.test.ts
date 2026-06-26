@@ -166,7 +166,7 @@ describe('ToTService', () => {
           thoughtId: tree.rootId,
           score: 150
         });
-      }, /Invalid evaluation score/);
+      }, /score must be between 0 and 100/);
     });
 
     it('should store reasoning in metadata', () => {
