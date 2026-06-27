@@ -1149,4 +1149,655 @@ describe('ToTService', () => {
       assert.ok(temp >= 0.1 && temp <= 1.0, 'Should handle zero maxDepth without error');
     });
   });
+
+  describe('moveSubtree', () => {
+    it('should move a subtree to a new parent', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought',
+        maxDepth: 10
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.movedCount, 2); // child1 + grandchild
+      assert.strictEqual(result.errors.length, 0);
+      assert.strictEqual(result.newSubtreeRootDepth, 2); // child2 is at depth 1
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      assert.strictEqual(movedChild!.parentId, child2!.id);
+      assert.strictEqual(movedChild!.depth, 2);
+      assert.ok(movedChild!.movedAt);
+      assert.ok(movedChild!.updatedAt);
+
+      const movedGrandchild = tree.thoughts.get(grandchild!.id);
+      assert.strictEqual(movedGrandchild!.depth, 3);
+      assert.ok(movedGrandchild!.movedAt);
+    });
+
+    it('should prevent moving tree root', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: tree.rootId,
+        newParentId: child!.id
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('Cannot move the tree root')));
+      assert.strictEqual(result.movedCount, 0);
+    });
+
+    it('should detect and prevent cycles', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      // Try to move child1 under its descendant (grandchild)
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: grandchild!.id
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('would create a cycle')));
+      assert.strictEqual(result.movedCount, 0);
+    });
+
+    it('should enforce depth limits', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought',
+        maxDepth: 3
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      const greatGrandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: grandchild!.id,
+        content: 'Great grandchild'
+      });
+
+      // Try to move child1 (depth 1 with great-grandchild at depth 3) under child2 (depth 1)
+      // This would make great-grandchild depth 4, which exceeds maxDepth of 3
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, false);
+      assert.ok(result.errors.some(e => e.includes('exceed max depth')));
+    });
+
+    it('should support dry-run mode', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const originalParentId = child1!.parentId;
+      const originalDepth = child1!.depth;
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id,
+        dryRun: true
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.ok(result.warnings.some(w => w.includes('dry run')));
+      assert.strictEqual(result.movedCount, 1);
+
+      // Verify no changes were made
+      const unchangedChild = tree.thoughts.get(child1!.id);
+      assert.strictEqual(unchangedChild!.parentId, originalParentId);
+      assert.strictEqual(unchangedChild!.depth, originalDepth);
+      assert.strictEqual(unchangedChild!.movedAt, undefined);
+    });
+
+    it('should update timestamps on moved subtree and tree', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      const originalTreeUpdatedAt = tree.updatedAt;
+
+      // Wait a bit to ensure timestamp difference
+      const start = Date.now();
+      while (Date.now() - start < 10) {}
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      const movedGrandchild = tree.thoughts.get(grandchild!.id);
+
+      assert.ok(movedChild!.updatedAt > originalTreeUpdatedAt);
+      assert.ok(movedGrandchild!.updatedAt > originalTreeUpdatedAt);
+      assert.ok(tree.updatedAt > originalTreeUpdatedAt);
+      assert.ok(movedChild!.movedAt);
+      assert.ok(movedGrandchild!.movedAt);
+    });
+
+    it('should handle moving to same parent (no-op)', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: tree.rootId
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.movedCount, 0);
+      assert.ok(result.warnings.some(w => w.includes('already under the specified parent')));
+    });
+
+    it('should throw error for non-existent tree', () => {
+      assert.throws(() => {
+        service.moveSubtree({
+          treeId: 'non-existent',
+          subtreeRootId: 'some-id',
+          newParentId: 'another-id'
+        });
+      }, /Tree not found/);
+    });
+
+    it('should throw error for non-existent subtree root', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      assert.throws(() => {
+        service.moveSubtree({
+          treeId: tree.id,
+          subtreeRootId: 'non-existent',
+          newParentId: tree.rootId
+        });
+      }, /Thought not found/);
+    });
+
+    it('should throw error for non-existent new parent', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child'
+      });
+
+      assert.throws(() => {
+        service.moveSubtree({
+          treeId: tree.id,
+          subtreeRootId: child!.id,
+          newParentId: 'non-existent'
+        });
+      }, /Thought not found/);
+    });
+
+    it('should correctly update old parent children list', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+
+      const root = tree.thoughts.get(tree.rootId);
+      assert.ok(root!.children.every(id => id !== child1!.id));
+      assert.strictEqual(root!.children.length, 1);
+      assert.strictEqual(root!.children[0], child2!.id);
+    });
+
+    it('should correctly update new parent children list', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+
+      const newParent = tree.thoughts.get(child2!.id);
+      assert.ok(newParent!.children.includes(child1!.id));
+    });
+
+    it('should populate affectedThoughtIds correctly', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 1'
+      });
+
+      const grandchild2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 2'
+      });
+
+      const greatGrandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: grandchild1!.id,
+        content: 'Great grandchild'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.affectedThoughtIds.length, 4);
+      assert.ok(result.affectedThoughtIds.includes(child1!.id));
+      assert.ok(result.affectedThoughtIds.includes(grandchild1!.id));
+      assert.ok(result.affectedThoughtIds.includes(grandchild2!.id));
+      assert.ok(result.affectedThoughtIds.includes(greatGrandchild!.id));
+    });
+
+    it('should preserve thought states during move', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      service.evaluateThought({
+        treeId: tree.id,
+        thoughtId: child1!.id,
+        score: 75,
+        creativity: 80,
+        risk: 30
+      });
+
+      service.verifyThought({
+        treeId: tree.id,
+        thoughtId: grandchild!.id,
+        verificationNotes: 'Verified'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      const movedGrandchild = tree.thoughts.get(grandchild!.id);
+
+      assert.strictEqual(movedChild!.evaluation, 75);
+      assert.strictEqual(movedChild!.creativity, 80);
+      assert.strictEqual(movedChild!.risk, 30);
+      assert.strictEqual(movedChild!.state, 'evaluated');
+      assert.strictEqual(movedGrandchild!.verified, true);
+      assert.strictEqual(movedGrandchild!.verificationNotes, 'Verified');
+      // verifyThought sets verified flag but doesn't change state
+      assert.strictEqual(movedGrandchild!.state, 'pending');
+    });
+
+    it('should preserve thought metadata during move', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1',
+        metadata: { customField: 'customValue', sessionId: 'session123' }
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      assert.deepStrictEqual(movedChild!.metadata, { customField: 'customValue', sessionId: 'session123' });
+    });
+
+    it('should handle moving subtree with multiple levels of grandchildren', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought',
+        maxDepth: 10
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 1'
+      });
+
+      const greatGrandchild1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: grandchild1!.id,
+        content: 'Great grandchild 1'
+      });
+
+      const greatGreatGrandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: greatGrandchild1!.id,
+        content: 'Great great grandchild'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.movedCount, 4);
+      assert.strictEqual(result.newSubtreeRootDepth, 2);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      const movedGrandchild = tree.thoughts.get(grandchild1!.id);
+      const movedGreatGrandchild = tree.thoughts.get(greatGrandchild1!.id);
+      const movedGreatGreatGrandchild = tree.thoughts.get(greatGreatGrandchild!.id);
+
+      assert.strictEqual(movedChild!.depth, 2);
+      assert.strictEqual(movedGrandchild!.depth, 3);
+      assert.strictEqual(movedGreatGrandchild!.depth, 4);
+      assert.strictEqual(movedGreatGreatGrandchild!.depth, 5);
+    });
+
+    it('should handle moving subtree with multiple children at same level', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought'
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 1'
+      });
+
+      const grandchild2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 2'
+      });
+
+      const grandchild3 = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild 3'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.movedCount, 4);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      assert.strictEqual(movedChild!.children.length, 3);
+      assert.ok(movedChild!.children.includes(grandchild1!.id));
+      assert.ok(movedChild!.children.includes(grandchild2!.id));
+      assert.ok(movedChild!.children.includes(grandchild3!.id));
+    });
+
+    it('should calculate newSubtreeRootDepth correctly', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Root thought',
+        maxDepth: 10
+      });
+
+      const child1 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 1'
+      });
+
+      const grandchild = service.addChildThought({
+        treeId: tree.id,
+        parentId: child1!.id,
+        content: 'Grandchild'
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child 2'
+      });
+
+      const result = service.moveSubtree({
+        treeId: tree.id,
+        subtreeRootId: child1!.id,
+        newParentId: child2!.id
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.newSubtreeRootDepth, 2);
+
+      const movedChild = tree.thoughts.get(child1!.id);
+      assert.strictEqual(movedChild!.depth, 2);
+    });
+  });
 });

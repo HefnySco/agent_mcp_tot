@@ -1,4 +1,4 @@
-import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats, NextActionSuggestion } from './types.js';
+import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, CycleDetectionError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats, NextActionSuggestion, MoveSubtreeParams, MoveSubtreeResult } from './types.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -337,6 +337,7 @@ export class ToTService {
       state: 'pending',
       depth: 0,
       createdAt: now,
+      updatedAt: now,
       metadata: params.metadata
     };
     
@@ -464,6 +465,7 @@ export class ToTService {
       state: 'pending',
       depth: parentThought.depth + 1,
       createdAt: now,
+      updatedAt: now,
       metadata: thoughtMetadata
     };
     
@@ -643,6 +645,243 @@ export class ToTService {
     const totalPrunedInTree = Array.from(tree.thoughts.values()).filter(t => t.state === 'pruned').length;
     const remainingCount = tree.thoughts.size - totalPrunedInTree;
     return { prunedCount, remainingCount };
+  }
+
+  /**
+   * Move a subtree to a new parent within the same tree
+   * Performs cycle detection, depth validation, and supports dry-run mode
+   * @param params - Parameters including treeId, subtreeRootId, newParentId, and optional dryRun
+   * @returns MoveSubtreeResult with validation status, errors, warnings, and affected thoughts
+   */
+  moveSubtree(params: MoveSubtreeParams): MoveSubtreeResult {
+    validateRequiredString(params.treeId, 'treeId');
+    validateRequiredString(params.subtreeRootId, 'subtreeRootId');
+    validateRequiredString(params.newParentId, 'newParentId');
+
+    const tree = this.trees.get(params.treeId);
+    if (!tree) {
+      throw new TreeNotFoundError(params.treeId);
+    }
+
+    const subtreeRoot = tree.thoughts.get(params.subtreeRootId);
+    if (!subtreeRoot) {
+      throw new ThoughtNotFoundError(params.treeId, params.subtreeRootId);
+    }
+
+    const newParent = tree.thoughts.get(params.newParentId);
+    if (!newParent) {
+      throw new ThoughtNotFoundError(params.treeId, params.newParentId);
+    }
+
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const affectedThoughtIds: string[] = [];
+
+    // Check if subtree root is the tree root (cannot move root)
+    if (params.subtreeRootId === tree.rootId) {
+      errors.push('Cannot move the tree root. Use create_tree to create a new tree instead.');
+      return {
+        valid: false,
+        errors,
+        movedCount: 0,
+        newSubtreeRootDepth: subtreeRoot.depth,
+        warnings,
+        affectedThoughtIds
+      };
+    }
+
+    // Check if new parent is the same as current parent
+    if (subtreeRoot.parentId === params.newParentId) {
+      warnings.push('Subtree is already under the specified parent. No move needed.');
+      return {
+        valid: true,
+        errors,
+        movedCount: 0,
+        newSubtreeRootDepth: subtreeRoot.depth,
+        warnings,
+        affectedThoughtIds
+      };
+    }
+
+    // Cycle detection: new parent must not be a descendant of subtree root
+    const isDescendant = this.checkIsDescendant(tree, params.newParentId, params.subtreeRootId);
+    if (isDescendant) {
+      errors.push(`Cannot move subtree: new parent ${params.newParentId} is a descendant of subtree root ${params.subtreeRootId}, which would create a cycle.`);
+      return {
+        valid: false,
+        errors,
+        movedCount: 0,
+        newSubtreeRootDepth: subtreeRoot.depth,
+        warnings,
+        affectedThoughtIds
+      };
+    }
+
+    // Calculate new depth for subtree root
+    const newSubtreeRootDepth = newParent.depth + 1;
+
+    // Check depth limits for the entire subtree
+    const maxDepthInSubtree = this.getMaxDepthInSubtree(tree, params.subtreeRootId);
+    const newMaxDepth = newSubtreeRootDepth + (maxDepthInSubtree - subtreeRoot.depth);
+
+    if (newMaxDepth > tree.maxDepth) {
+      errors.push(`Move would exceed max depth: new max depth would be ${newMaxDepth}, but tree maxDepth is ${tree.maxDepth}`);
+      return {
+        valid: false,
+        errors,
+        movedCount: 0,
+        newSubtreeRootDepth,
+        warnings,
+        affectedThoughtIds
+      };
+    }
+
+    // Collect all thought IDs in the subtree
+    const subtreeThoughtIds = this.collectSubtreeThoughtIds(tree, params.subtreeRootId);
+    affectedThoughtIds.push(...subtreeThoughtIds);
+
+    // If dry run, return preview without making changes
+    if (params.dryRun) {
+      warnings.push('This is a dry run. No changes were made.');
+      return {
+        valid: true,
+        errors,
+        movedCount: subtreeThoughtIds.length,
+        newSubtreeRootDepth,
+        warnings,
+        affectedThoughtIds
+      };
+    }
+
+    // Perform the actual move
+    const now = new Date().toISOString();
+
+    // Remove subtree root from old parent's children
+    if (subtreeRoot.parentId) {
+      const oldParent = tree.thoughts.get(subtreeRoot.parentId);
+      if (oldParent) {
+        oldParent.children = oldParent.children.filter(id => id !== params.subtreeRootId);
+        oldParent.updatedAt = now;
+      }
+    }
+
+    // Add subtree root to new parent's children
+    newParent.children.push(params.subtreeRootId);
+    newParent.updatedAt = now;
+
+    // Update subtree root's parent
+    subtreeRoot.parentId = params.newParentId;
+    subtreeRoot.updatedAt = now;
+    subtreeRoot.movedAt = now;
+
+    // Recalculate depth and update timestamps for all thoughts in subtree
+    this.updateSubtreeDepthsAndTimestamps(tree, params.subtreeRootId, newSubtreeRootDepth, now);
+
+    // Update tree timestamp
+    tree.updatedAt = now;
+
+    warnings.push('Subtree moved successfully. Consider re-evaluating thoughts in the new context.');
+
+    return {
+      valid: true,
+      errors,
+      movedCount: subtreeThoughtIds.length,
+      newSubtreeRootDepth,
+      warnings,
+      affectedThoughtIds
+    };
+  }
+
+  /**
+   * Check if a thought is a descendant of another thought
+   */
+  private checkIsDescendant(tree: Tree, potentialDescendantId: string, ancestorId: string): boolean {
+    const visited = new Set<string>();
+    const stack: string[] = [ancestorId];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      if (currentId === potentialDescendantId) {
+        return true;
+      }
+      if (visited.has(currentId)) {
+        continue;
+      }
+      visited.add(currentId);
+
+      const currentThought = tree.thoughts.get(currentId);
+      if (currentThought) {
+        for (const childId of currentThought.children) {
+          stack.push(childId);
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Get the maximum depth within a subtree
+   */
+  private getMaxDepthInSubtree(tree: Tree, subtreeRootId: string): number {
+    let maxDepth = 0;
+    const stack: string[] = [subtreeRootId];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      const currentThought = tree.thoughts.get(currentId);
+      if (currentThought) {
+        maxDepth = Math.max(maxDepth, currentThought.depth);
+        for (const childId of currentThought.children) {
+          stack.push(childId);
+        }
+      }
+    }
+
+    return maxDepth;
+  }
+
+  /**
+   * Collect all thought IDs in a subtree
+   */
+  private collectSubtreeThoughtIds(tree: Tree, subtreeRootId: string): string[] {
+    const ids: string[] = [];
+    const stack: string[] = [subtreeRootId];
+
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      ids.push(currentId);
+
+      const currentThought = tree.thoughts.get(currentId);
+      if (currentThought) {
+        for (const childId of currentThought.children) {
+          stack.push(childId);
+        }
+      }
+    }
+
+    return ids;
+  }
+
+  /**
+   * Recalculate depths and update timestamps for all thoughts in a subtree
+   */
+  private updateSubtreeDepthsAndTimestamps(tree: Tree, subtreeRootId: string, newDepth: number, timestamp: string): void {
+    const stack: Array<{ thoughtId: string; depth: number }> = [{ thoughtId: subtreeRootId, depth: newDepth }];
+
+    while (stack.length > 0) {
+      const { thoughtId, depth } = stack.pop()!;
+      const thought = tree.thoughts.get(thoughtId);
+      if (thought) {
+        thought.depth = depth;
+        thought.updatedAt = timestamp;
+        thought.movedAt = timestamp;
+
+        for (const childId of thought.children) {
+          stack.push({ thoughtId: childId, depth: depth + 1 });
+        }
+      }
+    }
   }
 
   getThought(treeId: string, thoughtId: string): Thought | null {
@@ -976,7 +1215,26 @@ export class ToTService {
       });
     }
 
-    // Suggestion 7: Refine low-evaluated thoughts
+    // Suggestion 7: Detect recently moved thoughts and suggest re-evaluation
+    const recentlyMovedThoughts = thoughts.filter(t => {
+      if (!t.movedAt) return false;
+      const movedTime = new Date(t.movedAt).getTime();
+      const now = Date.now();
+      const fiveMinutesMs = 5 * 60 * 1000;
+      return (now - movedTime) < fiveMinutesMs;
+    });
+
+    if (recentlyMovedThoughts.length > 0) {
+      const movedThought = recentlyMovedThoughts[0];
+      suggestions.push({
+        action: 'evaluate_thought',
+        targetThoughtId: movedThought.id,
+        reason: `${recentlyMovedThoughts.length} thought(s) were recently moved. Re-evaluating them in their new context is recommended to ensure their relevance and accuracy.`,
+        priority: 'high'
+      });
+    }
+
+    // Suggestion 8: Refine low-evaluated thoughts
     if (evaluatedThoughts.length > 0 && stats.averageEvaluation < 50) {
       const lowEvalThought = evaluatedThoughts
         .filter(t => t.evaluation !== null)
@@ -1409,6 +1667,7 @@ export class ToTService {
       state: 'evaluated',
       depth: parentThought.depth + 1,
       createdAt: now,
+      updatedAt: now,
       metadata: params.metadata
     };
 
@@ -1487,6 +1746,7 @@ export class ToTService {
         state: 'pending',
         depth: parentThought.depth + 1,
         createdAt: now,
+        updatedAt: now,
         metadata: params.metadata
       };
 
@@ -1688,7 +1948,7 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
       lines.push('');
     }
 
-    lines.push(`Legend: ○=pending ✓=evaluated ★=selected ✗=pruned [C:creativity] [R:risk]`);
+    lines.push(`Legend: ○=pending ✓=evaluated ★=selected ✗=pruned ↳=recently moved [C:creativity] [R:risk]`);
     lines.push('');
 
     const renderNode = (thoughtId: string, prefix: string, isLast: boolean): void => {
@@ -1697,7 +1957,10 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
 
       const stateIcon = this.getStateIcon(thought.state);
       const label = this.formatThoughtLabel(thought, true);
-      
+
+      // Add moved indicator for recently moved thoughts (within last 5 minutes)
+      const movedIndicator = thought.movedAt ? ' ↳' : '';
+
       // Add creativity/risk badges with clearer formatting
       let badges = '';
       if (thought.creativity !== undefined && thought.creativity !== null) {
@@ -1708,8 +1971,8 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
         const riskLevel = thought.risk >= 70 ? '⚠' : thought.risk >= 40 ? '○' : '✓';
         badges += ` [R:${thought.risk}${riskLevel}]`;
       }
-      
-      lines.push(`${prefix}${isLast ? '└── ' : '├── '}${stateIcon} ${label}${badges}`);
+
+      lines.push(`${prefix}${isLast ? '└── ' : '├── '}${stateIcon} ${label}${movedIndicator}${badges}`);
 
       const children = thought.children;
       for (let i = 0; i < children.length; i++) {
@@ -1746,7 +2009,8 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
       const label = this.formatThoughtLabel(thought, false);
       const content = label.replace(/"/g, '\\"').substring(0, this.MAX_CONTENT_LENGTH);
       const verificationSuffix = thought.verified ? ' ✓' : '';
-      
+      const movedSuffix = thought.movedAt ? ' ↳' : '';
+
       // Add creativity/risk badges with visual indicators
       let badges = '';
       if (thought.creativity !== undefined && thought.creativity !== null) {
@@ -1757,8 +2021,8 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
         const riskIcon = thought.risk >= 70 ? '⚠️' : thought.risk >= 40 ? '○' : '✓';
         badges += ` | R:${thought.risk}${riskIcon}`;
       }
-      
-      const nodeLabel = badges ? `${content}${verificationSuffix}${badges}` : `${content}${verificationSuffix}`;
+
+      const nodeLabel = badges ? `${content}${verificationSuffix}${movedSuffix}${badges}` : `${content}${verificationSuffix}${movedSuffix}`;
       lines.push(`    ${nodeId}["${nodeLabel}"]${stateStyle}`);
 
       if (parentId) {

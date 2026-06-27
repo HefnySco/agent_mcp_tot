@@ -240,6 +240,31 @@ Prune thoughts below a certain evaluation threshold.
 - `treeId` (string, required): The ID of the tree
 - `threshold` (number, required): The evaluation threshold (thoughts below this will be pruned)
 
+### `move_subtree`
+Move a subtree to a new parent within the same tree. Performs cycle detection, depth validation, and supports dry-run mode for safe preview.
+
+**Parameters:**
+- `treeId` (string, required): The ID of the tree
+- `subtreeRootId` (string, required): The ID of the subtree root to move
+- `newParentId` (string, required): The ID of the new parent thought
+- `dryRun` (boolean, optional): If true, preview the move without making changes (default: false)
+
+**Returns:**
+- `valid` (boolean): Whether the move is valid
+- `errors` (array): List of validation errors
+- `movedCount` (number): Number of thoughts that would be moved
+- `newSubtreeRootDepth` (number): New depth of the subtree root after move
+- `warnings` (array): List of warnings and recommendations
+- `affectedThoughtIds` (array): IDs of all thoughts in the subtree
+
+**Important Notes:**
+- Cannot move the tree root (use `create_tree` to create a new tree instead)
+- Cannot move a subtree to create a cycle (new parent must not be a descendant of subtree root)
+- Move must not exceed the tree's maxDepth limit
+- Use `dryRun: true` to preview the move before executing
+- After moving, consider re-evaluating thoughts in their new context
+- This is a **reasoning-layer operation** for restructuring thought trees, distinct from Task Orchestrator's `move_task` which is for execution workflow management
+
 ### Query Operations
 
 ### `get_thought`

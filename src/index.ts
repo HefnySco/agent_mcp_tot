@@ -352,6 +352,32 @@ class ToTMCPServer {
             }
           },
           {
+            name: 'move_subtree',
+            description: 'Move a subtree to a new parent within the same tree. Performs cycle detection, depth validation, and supports dry-run mode for safe preview.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                treeId: {
+                  type: 'string',
+                  description: 'The ID of the tree'
+                },
+                subtreeRootId: {
+                  type: 'string',
+                  description: 'The ID of the subtree root to move'
+                },
+                newParentId: {
+                  type: 'string',
+                  description: 'The ID of the new parent thought'
+                },
+                dryRun: {
+                  type: 'boolean',
+                  description: 'If true, preview the move without making changes (default: false)'
+                }
+              },
+              required: ['treeId', 'subtreeRootId', 'newParentId']
+            }
+          },
+          {
             name: 'get_thought',
             description: 'Get a specific thought by ID',
             inputSchema: {
@@ -778,6 +804,9 @@ class ToTMCPServer {
 
           case 'prune_tree':
             return thoughtHandlers.handlePruneTree(this.totService, args, this.logRequest.bind(this));
+
+          case 'move_subtree':
+            return thoughtHandlers.handleMoveSubtree(this.totService, args, this.logRequest.bind(this));
 
           case 'get_thought':
             return queryHandlers.handleGetThought(this.totService, args, this.logRequest.bind(this));

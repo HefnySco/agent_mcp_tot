@@ -283,3 +283,43 @@ export async function handlePruneTree(
   await logRequest('prune_tree', args, output);
   return output;
 }
+
+export async function handleMoveSubtree(
+  totService: ToTService,
+  args: any,
+  logRequest: (name: string, args: any, result: any) => Promise<void>
+) {
+  const treeId = args?.treeId as string;
+  const subtreeRootId = args?.subtreeRootId as string;
+  const newParentId = args?.newParentId as string;
+  const dryRun = args?.dryRun as boolean | undefined;
+
+  validateRequiredString(treeId, 'treeId');
+  validateRequiredString(subtreeRootId, 'subtreeRootId');
+  validateRequiredString(newParentId, 'newParentId');
+
+  const result = totService.moveSubtree({
+    treeId,
+    subtreeRootId,
+    newParentId,
+    dryRun
+  });
+
+  if (!dryRun) {
+    await totService.save();
+  }
+
+  const output = {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          message: dryRun ? 'Dry run completed' : 'Subtree moved successfully',
+          ...result
+        }, null, 2)
+      }
+    ]
+  };
+  await logRequest('move_subtree', args, output);
+  return output;
+}

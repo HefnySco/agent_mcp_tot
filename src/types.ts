@@ -13,8 +13,10 @@ export interface Thought {
   state: 'pending' | 'evaluated' | 'selected' | 'pruned';
   depth: number;
   createdAt: string;
+  updatedAt: string;
   verified?: boolean;
   verificationNotes?: string;
+  movedAt?: string;
   metadata?: Record<string, any>;
 }
 
@@ -200,6 +202,13 @@ export class UnverifiedThoughtError extends ToTError {
   }
 }
 
+export class CycleDetectionError extends ToTError {
+  constructor(subtreeRootId: string, newParentId: string) {
+    super(`Cannot move subtree: new parent ${newParentId} is a descendant of subtree root ${subtreeRootId}, which would create a cycle.`);
+    this.name = 'CycleDetectionError';
+  }
+}
+
 // LLM integration interface
 export interface StructuredEvaluationResult {
   overallScore: number;
@@ -271,4 +280,20 @@ export interface NextActionSuggestion {
   targetThoughtId?: string;
   reason: string;
   priority: 'high' | 'medium' | 'low';
+}
+
+export interface MoveSubtreeParams {
+  treeId: string;
+  subtreeRootId: string;
+  newParentId: string;
+  dryRun?: boolean;
+}
+
+export interface MoveSubtreeResult {
+  valid: boolean;
+  errors: string[];
+  movedCount: number;
+  newSubtreeRootDepth: number;
+  warnings: string[];
+  affectedThoughtIds: string[];
 }
