@@ -153,3 +153,34 @@ export async function handleDeleteTree(
   await logRequest('delete_tree', args, result);
   return result;
 }
+
+export async function handleClearTree(
+  totService: ToTService,
+  args: any,
+  logRequest: (name: string, args: any, result: any) => Promise<void>
+) {
+  const treeId = args?.treeId as string;
+  validateRequiredString(treeId, 'treeId');
+
+  const cleared = totService.clearTree(treeId);
+  
+  if (!cleared) {
+    throw new Error('Tree not found');
+  }
+
+  await totService.save();
+
+  const result = {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          message: 'Tree cleared successfully',
+          treeId
+        }, null, 2)
+      }
+    ]
+  };
+  await logRequest('clear_tree', args, result);
+  return result;
+}

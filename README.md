@@ -199,6 +199,12 @@ Delete a tree by ID.
 **Parameters:**
 - `treeId` (string, required): The ID of the tree to delete
 
+### `clear_tree`
+Clear a specific tree by ID.
+
+**Parameters:**
+- `treeId` (string, required): The ID of the tree to clear
+
 ### Thought Operations
 
 ### `add_child`
@@ -303,8 +309,20 @@ Get statistics about a tree.
 
 ### System Operations
 
-### `clear_all`
-Clear all trees.
+### `clear_tree`
+Clear a specific tree by ID.
+
+**Parameters:**
+- `treeId` (string, required): The ID of the tree to clear
+
+### `clear_strategy`
+Clear a specific strategy by ID.
+
+**Parameters:**
+- `strategyId` (string, required): The ID of the strategy to clear
+
+### `clear_everything`
+Clear all trees and strategies.
 
 ### `save_state`
 Manually save the current state to storage.

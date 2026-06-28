@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { ToTService, ToTServiceConfig, LLMProvider } from '../src/totService.js';
 import fs from 'fs/promises';
@@ -19,6 +19,11 @@ describe('ToTService', () => {
     }
     service = new ToTService(TEST_STORAGE_PATH);
     await service.load();
+  });
+
+  beforeEach(() => {
+    // Clear strategies before each test to avoid accumulation
+    (service as any).strategies.clear();
   });
 
   after(async () => {
@@ -932,7 +937,7 @@ describe('ToTService', () => {
   });
 
   describe('visualization', () => {
-    it('should render tree in ASCII format', () => {
+    it('should render tree in ASCII format', async () => {
       const tree = service.createTree({
         goal: 'Visualization test',
         rootContent: 'Root thought',
@@ -960,7 +965,7 @@ describe('ToTService', () => {
         score: 50
       });
 
-      const ascii = service.visualizeTree({
+      const ascii = await service.visualizeTree({
         treeId: tree.id,
         format: 'ascii'
       });
@@ -973,7 +978,7 @@ describe('ToTService', () => {
       assert.ok(ascii.includes('└──'));
     });
 
-    it('should render tree in Mermaid format', () => {
+    it('should render tree in Mermaid format', async () => {
       const tree = service.createTree({
         goal: 'Mermaid test',
         rootContent: 'Root',
@@ -986,7 +991,7 @@ describe('ToTService', () => {
         content: 'Child'
       });
 
-      const mermaid = service.visualizeTree({
+      const mermaid = await service.visualizeTree({
         treeId: tree.id,
         format: 'mermaid'
       });
@@ -996,7 +1001,7 @@ describe('ToTService', () => {
       assert.ok(mermaid.includes('-->'));
     });
 
-    it('should render tree in DOT format', () => {
+    it('should render tree in DOT format', async () => {
       const tree = service.createTree({
         goal: 'DOT test',
         rootContent: 'Root',
@@ -1009,7 +1014,7 @@ describe('ToTService', () => {
         content: 'Child'
       });
 
-      const dot = service.visualizeTree({
+      const dot = await service.visualizeTree({
         treeId: tree.id,
         format: 'dot'
       });
@@ -1019,7 +1024,7 @@ describe('ToTService', () => {
       assert.ok(dot.includes('->'));
     });
 
-    it('should show thought states in visualization', () => {
+    it('should show thought states in visualization', async () => {
       const tree = service.createTree({
         goal: 'State test',
         rootContent: 'Root',
@@ -1046,7 +1051,7 @@ describe('ToTService', () => {
         verificationNotes: 'Verified'
       });
 
-      const ascii = service.visualizeTree({
+      const ascii = await service.visualizeTree({
         treeId: tree.id,
         format: 'ascii'
       });
@@ -1054,13 +1059,16 @@ describe('ToTService', () => {
       assert.ok(ascii.includes('✓'));
     });
 
-    it('should throw error for non-existent tree', () => {
-      assert.throws(() => {
-        service.visualizeTree({
-          treeId: 'non-existent',
-          format: 'ascii'
-        });
-      }, /Tree not found/);
+    it('should throw error for non-existent tree', async () => {
+      await assert.rejects(
+        async () => {
+          await service.visualizeTree({
+            treeId: 'non-existent',
+            format: 'ascii'
+          });
+        },
+        /Tree not found/
+      );
     });
   });
 
@@ -1147,6 +1155,471 @@ describe('ToTService', () => {
       const temp = calculateTemp(0, 0);
 
       assert.ok(temp >= 0.1 && temp <= 1.0, 'Should handle zero maxDepth without error');
+    });
+  });
+
+  describe('Strategy CRUD', () => {
+    it('should create a strategy', () => {
+      const strategy = service.createStrategy('Test Strategy', 'Test description');
+
+      assert.ok(strategy.id);
+      assert.strictEqual(strategy.name, 'Test Strategy');
+      assert.strictEqual(strategy.description, 'Test description');
+      assert.strictEqual(strategy.status, 'active');
+      assert.deepStrictEqual(strategy.treeIds, []);
+      assert.ok(strategy.createdAt);
+      assert.ok(strategy.updatedAt);
+    });
+
+    it('should throw error for empty strategy name', () => {
+      assert.throws(() => {
+        service.createStrategy('');
+      }, /Strategy name is required/);
+    });
+
+    it('should throw error for duplicate strategy name', () => {
+      service.createStrategy('Duplicate Strategy');
+
+      assert.throws(() => {
+        service.createStrategy('Duplicate Strategy');
+      }, /Strategy with name "Duplicate Strategy" already exists/);
+    });
+
+    it('should get strategy by ID', () => {
+      const strategy = service.createStrategy('Get By ID');
+
+      const found = service.getStrategy(strategy.id);
+      assert.ok(found);
+      assert.strictEqual(found.id, strategy.id);
+      assert.strictEqual(found.name, 'Get By ID');
+    });
+
+    it('should get strategy by name (case-insensitive)', () => {
+      service.createStrategy('Case Insensitive');
+
+      const found = service.getStrategy('case insensitive');
+      assert.ok(found);
+      assert.strictEqual(found.name, 'Case Insensitive');
+
+      const found2 = service.getStrategy('CASE INSENSITIVE');
+      assert.ok(found2);
+      assert.strictEqual(found2.name, 'Case Insensitive');
+    });
+
+    it('should return undefined for non-existent strategy', () => {
+      const found = service.getStrategy('non-existent');
+      assert.strictEqual(found, undefined);
+    });
+
+    it('should list all strategies', () => {
+      service.createStrategy('Strategy 1');
+      service.createStrategy('Strategy 2');
+      service.createStrategy('Strategy 3');
+
+      const strategies = service.listStrategies();
+      assert.strictEqual(strategies.length, 3);
+    });
+
+    it('should list strategies filtered by status', () => {
+      const s1 = service.createStrategy('Active Strategy');
+      const s2 = service.createStrategy('Paused Strategy');
+      const s3 = service.createStrategy('Completed Strategy');
+
+      service.updateStrategy(s2.id, { status: 'paused' });
+      service.updateStrategy(s3.id, { status: 'completed' });
+
+      const activeStrategies = service.listStrategies('active');
+      assert.strictEqual(activeStrategies.length, 1);
+      assert.strictEqual(activeStrategies[0].name, 'Active Strategy');
+
+      const pausedStrategies = service.listStrategies('paused');
+      assert.strictEqual(pausedStrategies.length, 1);
+      assert.strictEqual(pausedStrategies[0].name, 'Paused Strategy');
+    });
+
+    it('should update strategy', () => {
+      const strategy = service.createStrategy('Original Name', 'Original description');
+
+      const updated = service.updateStrategy(strategy.id, {
+        name: 'Updated Name',
+        description: 'Updated description',
+        status: 'paused'
+      });
+
+      assert.ok(updated);
+      assert.strictEqual(updated.name, 'Updated Name');
+      assert.strictEqual(updated.description, 'Updated description');
+      assert.strictEqual(updated.status, 'paused');
+    });
+
+    it('should throw error when updating to duplicate name', () => {
+      service.createStrategy('Strategy A');
+      const strategyB = service.createStrategy('Strategy B');
+
+      assert.throws(() => {
+        service.updateStrategy(strategyB.id, { name: 'Strategy A' });
+      }, /Strategy with name "Strategy A" already exists/);
+    });
+
+    it('should return null when updating non-existent strategy', () => {
+      const updated = service.updateStrategy('non-existent', { name: 'New Name' });
+      assert.strictEqual(updated, null);
+    });
+
+    it('should delete strategy without deleting trees', () => {
+      const strategy = service.createStrategy('Delete Test');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy.id);
+
+      const deleted = service.deleteStrategy(strategy.id, false);
+      assert.strictEqual(deleted, true);
+
+      // Tree should still exist but not be in strategy
+      const remainingTree = service.getTree(tree.id);
+      assert.ok(remainingTree);
+      assert.strictEqual(remainingTree.strategyId, undefined);
+    });
+
+    it('should delete strategy and its trees', () => {
+      const strategy = service.createStrategy('Delete With Trees');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy.id);
+
+      const deleted = service.deleteStrategy(strategy.id, true);
+      assert.strictEqual(deleted, true);
+
+      // Tree should be deleted
+      const remainingTree = service.getTree(tree.id);
+      assert.strictEqual(remainingTree, undefined);
+    });
+
+    it('should return false when deleting non-existent strategy', () => {
+      const deleted = service.deleteStrategy('non-existent');
+      assert.strictEqual(deleted, false);
+    });
+  });
+
+  describe('Tree-Strategy operations', () => {
+    it('should move tree to strategy', () => {
+      const strategy = service.createStrategy('Move Test');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      const moved = service.moveTreeToStrategy(tree.id, strategy.id);
+      assert.strictEqual(moved, true);
+
+      const updatedTree = service.getTree(tree.id);
+      assert.ok(updatedTree);
+      assert.strictEqual(updatedTree.strategyId, strategy.id);
+
+      const updatedStrategy = service.getStrategy(strategy.id);
+      assert.ok(updatedStrategy);
+      assert.ok(updatedStrategy.treeIds.includes(tree.id));
+    });
+
+    it('should move tree between strategies', () => {
+      const strategy1 = service.createStrategy('Strategy 1');
+      const strategy2 = service.createStrategy('Strategy 2');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy1.id);
+      service.moveTreeToStrategy(tree.id, strategy2.id);
+
+      const updatedTree = service.getTree(tree.id);
+      assert.ok(updatedTree);
+      assert.strictEqual(updatedTree.strategyId, strategy2.id);
+
+      const s1 = service.getStrategy(strategy1.id);
+      const s2 = service.getStrategy(strategy2.id);
+      assert.ok(s1);
+      assert.ok(s2);
+      assert.ok(!s1.treeIds.includes(tree.id));
+      assert.ok(s2.treeIds.includes(tree.id));
+    });
+
+    it('should throw error when moving non-existent tree', () => {
+      const strategy = service.createStrategy('Test');
+
+      assert.throws(() => {
+        service.moveTreeToStrategy('non-existent', strategy.id);
+      }, /Tree not found/);
+    });
+
+    it('should throw error when moving to non-existent strategy', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      assert.throws(() => {
+        service.moveTreeToStrategy(tree.id, 'non-existent');
+      }, /Strategy not found/);
+    });
+
+    it('should remove tree from strategy', () => {
+      const strategy = service.createStrategy('Remove Test');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy.id);
+
+      const removed = service.removeTreeFromStrategy(tree.id);
+      assert.strictEqual(removed, true);
+
+      const updatedTree = service.getTree(tree.id);
+      assert.ok(updatedTree);
+      assert.strictEqual(updatedTree.strategyId, undefined);
+
+      const updatedStrategy = service.getStrategy(strategy.id);
+      assert.ok(updatedStrategy);
+      assert.ok(!updatedStrategy.treeIds.includes(tree.id));
+    });
+
+    it('should handle removing tree not in strategy', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      const removed = service.removeTreeFromStrategy(tree.id);
+      assert.strictEqual(removed, true);
+    });
+
+    it('should clone tree to strategy', () => {
+      const strategy = service.createStrategy('Clone Test');
+      const tree = service.createTree({
+        goal: 'Original goal',
+        rootContent: 'Root thought'
+      });
+
+      const child = service.addChildThought({
+        treeId: tree.id,
+        parentId: tree.rootId,
+        content: 'Child thought'
+      });
+
+      assert.ok(child);
+
+      service.evaluateThought({
+        treeId: tree.id,
+        thoughtId: child.id!,
+        score: 75,
+        creativity: 80,
+        risk: 30
+      });
+
+      const result = service.cloneTreeToStrategy(tree.id, strategy.id);
+      assert.ok(result.newTreeId);
+      assert.notStrictEqual(result.newTreeId, tree.id);
+
+      const clonedTree = service.getTree(result.newTreeId);
+      assert.ok(clonedTree);
+      assert.strictEqual(clonedTree.strategyId, strategy.id);
+      assert.strictEqual(clonedTree.goal, 'Original goal');
+      assert.strictEqual(clonedTree.thoughts.size, 2);
+
+      // Verify IDs are different
+      assert.notStrictEqual(clonedTree.rootId, tree.rootId);
+
+      // Verify thought structure is preserved
+      const clonedRoot = clonedTree.thoughts.get(clonedTree.rootId);
+      assert.ok(clonedRoot);
+      assert.strictEqual(clonedRoot.content, 'Root thought');
+
+      // Verify evaluation scores are preserved
+      const clonedThoughts = Array.from(clonedTree.thoughts.values());
+      const evaluatedThought = clonedThoughts.find(t => t.content === 'Child thought');
+      assert.ok(evaluatedThought);
+      assert.strictEqual(evaluatedThought.evaluation, 75);
+      assert.strictEqual(evaluatedThought.creativity, 80);
+      assert.strictEqual(evaluatedThought.risk, 30);
+    });
+
+    it('should clone tree with name prefix', () => {
+      const strategy = service.createStrategy('Prefix Test');
+      const tree = service.createTree({
+        goal: 'Original goal',
+        rootContent: 'Root'
+      });
+
+      const result = service.cloneTreeToStrategy(tree.id, strategy.id, { namePrefix: 'Copy of' });
+      const clonedTree = service.getTree(result.newTreeId);
+
+      assert.ok(clonedTree);
+      assert.strictEqual(clonedTree.goal, 'Copy of Original goal');
+    });
+
+    it('should throw error when cloning non-existent tree', () => {
+      const strategy = service.createStrategy('Test');
+
+      assert.throws(() => {
+        service.cloneTreeToStrategy('non-existent', strategy.id);
+      }, /Tree not found/);
+    });
+
+    it('should throw error when cloning to non-existent strategy', () => {
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      assert.throws(() => {
+        service.cloneTreeToStrategy(tree.id, 'non-existent');
+      }, /Strategy not found/);
+    });
+  });
+
+  describe('Strategy query helpers', () => {
+    it('should get trees by strategy', () => {
+      const strategy = service.createStrategy('Query Test');
+      const tree1 = service.createTree({
+        goal: 'Goal 1',
+        rootContent: 'Root 1'
+      });
+      const tree2 = service.createTree({
+        goal: 'Goal 2',
+        rootContent: 'Root 2'
+      });
+
+      service.moveTreeToStrategy(tree1.id, strategy.id);
+      service.moveTreeToStrategy(tree2.id, strategy.id);
+
+      const trees = service.getTreesByStrategy(strategy.id);
+      assert.strictEqual(trees.length, 2);
+      assert.ok(trees.find(t => t.id === tree1.id));
+      assert.ok(trees.find(t => t.id === tree2.id));
+    });
+
+    it('should get trees by strategy name', () => {
+      const strategy = service.createStrategy('Name Query');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy.id);
+
+      const trees = service.getTreesByStrategy('name query');
+      assert.strictEqual(trees.length, 1);
+      assert.strictEqual(trees[0].id, tree.id);
+    });
+
+    it('should return empty array for non-existent strategy', () => {
+      const trees = service.getTreesByStrategy('non-existent');
+      assert.deepStrictEqual(trees, []);
+    });
+
+    it('should get strategy with trees and stats', () => {
+      const strategy = service.createStrategy('Stats Test');
+      const tree1 = service.createTree({
+        goal: 'Goal 1',
+        rootContent: 'Root 1'
+      });
+      const tree2 = service.createTree({
+        goal: 'Goal 2',
+        rootContent: 'Root 2'
+      });
+
+      service.moveTreeToStrategy(tree1.id, strategy.id);
+      service.moveTreeToStrategy(tree2.id, strategy.id);
+
+      const child1 = service.addChildThought({
+        treeId: tree1.id,
+        parentId: tree1.rootId,
+        content: 'Child 1'
+      });
+
+      assert.ok(child1);
+
+      service.evaluateThought({
+        treeId: tree1.id,
+        thoughtId: child1.id!,
+        score: 75
+      });
+
+      const child2 = service.addChildThought({
+        treeId: tree2.id,
+        parentId: tree2.rootId,
+        content: 'Child 2'
+      });
+
+      assert.ok(child2);
+
+      service.evaluateThought({
+        treeId: tree2.id,
+        thoughtId: child2.id!,
+        score: 85
+      });
+
+      const context = service.getStrategyWithTrees(strategy.id);
+      assert.ok(context);
+      assert.strictEqual(context.strategy.id, strategy.id);
+      assert.strictEqual(context.trees.length, 2);
+      assert.strictEqual(context.stats.totalTrees, 2);
+      assert.strictEqual(context.stats.totalThoughts, 4); // 2 roots + 2 children
+      assert.strictEqual(context.stats.averageEvaluation, 80); // (75 + 85) / 2
+    });
+
+    it('should return null for non-existent strategy context', () => {
+      const context = service.getStrategyWithTrees('non-existent');
+      assert.strictEqual(context, null);
+    });
+  });
+
+  describe('Strategy persistence', () => {
+    it('should save and load strategies', async () => {
+      const strategy = service.createStrategy('Persistence Strategy', 'Test description');
+      const tree = service.createTree({
+        goal: 'Test goal',
+        rootContent: 'Test root'
+      });
+
+      service.moveTreeToStrategy(tree.id, strategy.id);
+
+      await service.save();
+
+      const newService = new ToTService(TEST_STORAGE_PATH);
+      await newService.load();
+
+      const loadedStrategy = newService.getStrategy(strategy.id);
+      assert.ok(loadedStrategy);
+      assert.strictEqual(loadedStrategy.name, 'Persistence Strategy');
+      assert.strictEqual(loadedStrategy.description, 'Test description');
+      assert.ok(loadedStrategy.treeIds.includes(tree.id));
+
+      const loadedTree = newService.getTree(tree.id);
+      assert.ok(loadedTree);
+      assert.strictEqual(loadedTree.strategyId, strategy.id);
+    });
+
+    it('should handle backward compatibility (no strategies in storage)', async () => {
+      // Create storage file without strategies
+      const storageData = {
+        trees: {}
+      };
+      await fs.writeFile(TEST_STORAGE_PATH, JSON.stringify(storageData, null, 2));
+
+      const newService = new ToTService(TEST_STORAGE_PATH);
+      await newService.load();
+
+      // Should load successfully with empty strategies
+      const strategies = newService.listStrategies();
+      assert.deepStrictEqual(strategies, []);
     });
   });
 
@@ -1798,6 +2271,74 @@ describe('ToTService', () => {
 
       const movedChild = tree.thoughts.get(child1!.id);
       assert.strictEqual(movedChild!.depth, 2);
+    });
+  });
+
+  describe('clear operations', () => {
+    it('should clear a specific tree', () => {
+      const tree1 = service.createTree({
+        goal: 'Tree 1',
+        rootContent: 'Root 1'
+      });
+
+      const tree2 = service.createTree({
+        goal: 'Tree 2',
+        rootContent: 'Root 2'
+      });
+
+      assert.strictEqual(service.getAllTrees().length, 2);
+
+      const cleared = service.clearTree(tree1.id);
+      assert.strictEqual(cleared, true);
+      assert.strictEqual(service.getAllTrees().length, 1);
+      assert.strictEqual(service.getTree(tree1.id), undefined);
+      assert.ok(service.getTree(tree2.id));
+    });
+
+    it('should return false when clearing non-existent tree', () => {
+      const cleared = service.clearTree('non-existent-id');
+      assert.strictEqual(cleared, false);
+    });
+
+    it('should clear a specific strategy', () => {
+      const strategy1 = service.createStrategy('Strategy 1', 'Description 1');
+      const strategy2 = service.createStrategy('Strategy 2', 'Description 2');
+
+      assert.strictEqual(service.listStrategies().length, 2);
+
+      const cleared = service.clearStrategy(strategy1.id);
+      assert.strictEqual(cleared, true);
+      assert.strictEqual(service.listStrategies().length, 1);
+      assert.strictEqual(service.getStrategy(strategy1.id), undefined);
+      assert.ok(service.getStrategy(strategy2.id));
+    });
+
+    it('should return false when clearing non-existent strategy', () => {
+      const cleared = service.clearStrategy('non-existent-id');
+      assert.strictEqual(cleared, false);
+    });
+
+    it('should clear everything (trees and strategies)', () => {
+      const tree1 = service.createTree({
+        goal: 'Tree 1',
+        rootContent: 'Root 1'
+      });
+
+      const tree2 = service.createTree({
+        goal: 'Tree 2',
+        rootContent: 'Root 2'
+      });
+
+      const strategy1 = service.createStrategy('Strategy 1', 'Description 1');
+      const strategy2 = service.createStrategy('Strategy 2', 'Description 2');
+
+      assert.strictEqual(service.getAllTrees().length, 2);
+      assert.strictEqual(service.listStrategies().length, 2);
+
+      service.clearEverything();
+
+      assert.strictEqual(service.getAllTrees().length, 0);
+      assert.strictEqual(service.listStrategies().length, 0);
     });
   });
 });

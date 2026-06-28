@@ -447,8 +447,36 @@ class ToTMCPServer {
             }
           },
           {
-            name: 'clear_all',
-            description: 'Clear all trees',
+            name: 'clear_tree',
+            description: 'Clear a specific tree by ID',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                treeId: {
+                  type: 'string',
+                  description: 'The ID of the tree to clear'
+                }
+              },
+              required: ['treeId']
+            }
+          },
+          {
+            name: 'clear_strategy',
+            description: 'Clear a specific strategy by ID',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                strategyId: {
+                  type: 'string',
+                  description: 'The ID of the strategy to clear'
+                }
+              },
+              required: ['strategyId']
+            }
+          },
+          {
+            name: 'clear_everything',
+            description: 'Clear all trees and strategies',
             inputSchema: {
               type: 'object',
               properties: {}
@@ -763,6 +791,120 @@ class ToTMCPServer {
               },
               required: ['sessionId']
             }
+          },
+          {
+            name: 'create_strategy',
+            description: 'Create a new Strategy for grouping related trees for long-term reasoning initiatives',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Human-friendly name for the strategy'
+                },
+                description: {
+                  type: 'string',
+                  description: 'Optional description of the strategy'
+                }
+              },
+              required: ['name']
+            }
+          },
+          {
+            name: 'list_strategies',
+            description: 'List all strategies, optionally filtered by status',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                status: {
+                  type: 'string',
+                  description: 'Optional status filter (active, paused, completed, archived)',
+                  enum: ['active', 'paused', 'completed', 'archived']
+                }
+              }
+            }
+          },
+          {
+            name: 'get_strategy',
+            description: 'Get a strategy by ID or name (case-insensitive)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                id: {
+                  type: 'string',
+                  description: 'The ID or name of the strategy'
+                }
+              },
+              required: ['id']
+            }
+          },
+          {
+            name: 'move_tree_to_strategy',
+            description: 'Move a tree to a strategy (lightweight operation that preserves original tree IDs)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                treeId: {
+                  type: 'string',
+                  description: 'The ID of the tree to move'
+                },
+                strategyIdOrName: {
+                  type: 'string',
+                  description: 'The ID or name of the target strategy'
+                }
+              },
+              required: ['treeId', 'strategyIdOrName']
+            }
+          },
+          {
+            name: 'clone_tree_to_strategy',
+            description: 'Clone a tree into a strategy (deep copy with new IDs for tree and all thoughts)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                treeId: {
+                  type: 'string',
+                  description: 'The ID of the tree to clone'
+                },
+                strategyIdOrName: {
+                  type: 'string',
+                  description: 'The ID or name of the target strategy'
+                },
+                namePrefix: {
+                  type: 'string',
+                  description: 'Optional prefix to add to the cloned tree goal'
+                }
+              },
+              required: ['treeId', 'strategyIdOrName']
+            }
+          },
+          {
+            name: 'list_trees_by_strategy',
+            description: 'List all trees belonging to a strategy (by ID or name)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                strategyIdOrName: {
+                  type: 'string',
+                  description: 'The ID or name of the strategy'
+                }
+              },
+              required: ['strategyIdOrName']
+            }
+          },
+          {
+            name: 'get_strategy_context',
+            description: 'Get a strategy with its trees and basic statistics (aggregated view across trees in the strategy)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                strategyIdOrName: {
+                  type: 'string',
+                  description: 'The ID or name of the strategy'
+                }
+              },
+              required: ['strategyIdOrName']
+            }
           }
         ]
       };
@@ -786,6 +928,9 @@ class ToTMCPServer {
 
           case 'delete_tree':
             return treeHandlers.handleDeleteTree(this.totService, args, this.logRequest.bind(this));
+
+          case 'clear_tree':
+            return treeHandlers.handleClearTree(this.totService, args, this.logRequest.bind(this));
 
           case 'add_child':
             return thoughtHandlers.handleAddChild(this.totService, args, this.logRequest.bind(this));
@@ -820,8 +965,8 @@ class ToTMCPServer {
           case 'get_tree_stats':
             return queryHandlers.handleGetTreeStats(this.totService, args, this.logRequest.bind(this));
 
-          case 'clear_all': {
-            this.totService.clearAll();
+          case 'clear_everything': {
+            this.totService.clearEverything();
             await this.totService.save();
 
             const result = {
@@ -1299,6 +1444,259 @@ class ToTMCPServer {
                 totalThoughts: thoughts.length,
                 totalTrees: trees.length
               }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'create_strategy': {
+            const name = args?.name as string;
+            const description = args?.description as string | undefined;
+
+            if (!name) {
+              throw new Error('name is required');
+            }
+
+            const strategy = this.totService.createStrategy(name, description);
+            await this.totService.save();
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Strategy created successfully',
+                    strategy: {
+                      id: strategy.id,
+                      name: strategy.name,
+                      description: strategy.description,
+                      status: strategy.status,
+                      treeIds: strategy.treeIds,
+                      createdAt: strategy.createdAt,
+                      updatedAt: strategy.updatedAt
+                    }
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'list_strategies': {
+            const status = args?.status as string | undefined;
+            const strategies = this.totService.listStrategies(status);
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Strategies retrieved successfully',
+                    strategies: strategies.map(s => ({
+                      id: s.id,
+                      name: s.name,
+                      description: s.description,
+                      status: s.status,
+                      treeCount: s.treeIds.length,
+                      createdAt: s.createdAt,
+                      updatedAt: s.updatedAt
+                    })),
+                    count: strategies.length
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'get_strategy': {
+            const id = args?.id as string;
+            if (!id) {
+              throw new Error('id is required');
+            }
+
+            const strategy = this.totService.getStrategy(id);
+            if (!strategy) {
+              throw new Error(`Strategy not found: ${id}`);
+            }
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Strategy retrieved successfully',
+                    strategy: {
+                      id: strategy.id,
+                      name: strategy.name,
+                      description: strategy.description,
+                      status: strategy.status,
+                      treeIds: strategy.treeIds,
+                      createdAt: strategy.createdAt,
+                      updatedAt: strategy.updatedAt,
+                      metadata: strategy.metadata
+                    }
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'move_tree_to_strategy': {
+            const treeId = args?.treeId as string;
+            const strategyIdOrName = args?.strategyIdOrName as string;
+
+            if (!treeId || !strategyIdOrName) {
+              throw new Error('treeId and strategyIdOrName are required');
+            }
+
+            this.totService.moveTreeToStrategy(treeId, strategyIdOrName);
+            await this.totService.save();
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Tree moved to strategy successfully',
+                    treeId,
+                    strategyIdOrName
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'clone_tree_to_strategy': {
+            const treeId = args?.treeId as string;
+            const strategyIdOrName = args?.strategyIdOrName as string;
+            const namePrefix = args?.namePrefix as string | undefined;
+
+            if (!treeId || !strategyIdOrName) {
+              throw new Error('treeId and strategyIdOrName are required');
+            }
+
+            const result = this.totService.cloneTreeToStrategy(treeId, strategyIdOrName, { namePrefix });
+            await this.totService.save();
+
+            const response = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Tree cloned to strategy successfully',
+                    newTreeId: result.newTreeId,
+                    originalTreeId: treeId,
+                    strategyIdOrName
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, response);
+            return response;
+          }
+
+          case 'list_trees_by_strategy': {
+            const strategyIdOrName = args?.strategyIdOrName as string;
+            if (!strategyIdOrName) {
+              throw new Error('strategyIdOrName is required');
+            }
+
+            const trees = this.totService.getTreesByStrategy(strategyIdOrName);
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Trees retrieved successfully',
+                    strategyIdOrName,
+                    trees: trees.map(t => ({
+                      id: t.id,
+                      goal: t.goal,
+                      rootId: t.rootId,
+                      maxDepth: t.maxDepth,
+                      thoughtCount: t.thoughts.size,
+                      createdAt: t.createdAt,
+                      updatedAt: t.updatedAt
+                    })),
+                    count: trees.length
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'get_strategy_context': {
+            const strategyIdOrName = args?.strategyIdOrName as string;
+            if (!strategyIdOrName) {
+              throw new Error('strategyIdOrName is required');
+            }
+
+            const context = this.totService.getStrategyWithTrees(strategyIdOrName);
+            if (!context) {
+              throw new Error(`Strategy not found: ${strategyIdOrName}`);
+            }
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Strategy context retrieved successfully',
+                    strategy: {
+                      id: context.strategy.id,
+                      name: context.strategy.name,
+                      description: context.strategy.description,
+                      status: context.strategy.status
+                    },
+                    stats: context.stats,
+                    trees: context.trees.map(t => ({
+                      id: t.id,
+                      goal: t.goal,
+                      thoughtCount: t.thoughts.size
+                    })),
+                    treeCount: context.trees.length
+                  }, null, 2)
+                }
+              ]
+            };
+            await this.logRequest(name, args, result);
+            return result;
+          }
+
+          case 'clear_strategy': {
+            const strategyId = args?.strategyId as string;
+            if (!strategyId) {
+              throw new Error('strategyId is required');
+            }
+
+            const cleared = this.totService.clearStrategy(strategyId);
+            
+            if (!cleared) {
+              throw new Error('Strategy not found');
+            }
+
+            await this.totService.save();
+
+            const result = {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    message: 'Strategy cleared successfully',
+                    strategyId
+                  }, null, 2)
                 }
               ]
             };

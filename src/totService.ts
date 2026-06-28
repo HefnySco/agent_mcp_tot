@@ -1,4 +1,4 @@
-import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, CycleDetectionError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats, NextActionSuggestion, MoveSubtreeParams, MoveSubtreeResult } from './types.js';
+import { Thought, Tree, CreateTreeParams, AddChildParams, EvaluateParams, SelectParams, VerifyParams, BacktrackParams, PruneParams, TreeStats, BranchingStrategyType, ExploreWithStrategyParams, ExplorationResult, ProposeAndEvaluateParams, GenerateChildrenParams, GeneratedChild, ToTServiceConfig, TreeNotFoundError, ThoughtNotFoundError, MaxDepthReachedError, InvalidEvaluationError, InvalidStrategyError, UnverifiedThoughtError, CycleDetectionError, LLMProvider, StopCriteria, StrategyCallback, TraversalStrategyConfig, VisualizationFormat, VisualizeTreeParams, UsageStats, NextActionSuggestion, MoveSubtreeParams, MoveSubtreeResult, Strategy } from './types.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,12 +15,14 @@ export { ToTServiceConfig, LLMProvider } from './types.js';
 
 export class ToTService {
   private trees: Map<string, Tree>;
+  private strategies: Map<string, Strategy>;
   private storagePath: string;
   private config: ToTServiceConfig;
   private readonly MAX_CONTENT_LENGTH = 50;
 
   constructor(storagePath: string, config?: ToTServiceConfig) {
     this.trees = new Map();
+    this.strategies = new Map();
     this.storagePath = storagePath;
     this.config = config || {};
   }
@@ -248,12 +250,31 @@ export class ToTService {
         this.trees.set(id, tree);
       }
 
-      logger.info(`Loaded ${this.trees.size} trees from storage`);
+      // Load strategies
+      this.strategies = new Map();
+      for (const [id, strategyData] of Object.entries(parsed.strategies || {})) {
+        if (!strategyData || typeof strategyData !== 'object') {
+          logger.warn(`Skipping invalid strategy data for ID: ${id}`);
+          continue;
+        }
+
+        const strategy = strategyData as Strategy;
+        
+        if (!strategy.id || !strategy.name) {
+          logger.warn(`Skipping malformed strategy for ID: ${id}`);
+          continue;
+        }
+
+        this.strategies.set(id, strategy);
+      }
+
+      logger.info(`Loaded ${this.trees.size} trees and ${this.strategies.size} strategies from storage`);
     } catch (err: any) {
       if (err.code === 'ENOENT') {
         // File doesn't exist yet — first run or was deleted. Create it with empty state.
         logger.info(`Storage file not found at ${this.storagePath}. Creating new empty storage.`);
         this.trees = new Map();
+        this.strategies = new Map();
         await this.save(); // ← This creates the file
         return;
       }
@@ -261,6 +282,7 @@ export class ToTService {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Failed to load ToT service state: ${message}. Starting with empty state.`);
       this.trees = new Map();
+      this.strategies = new Map();
     }
   }
 
@@ -269,7 +291,8 @@ export class ToTService {
     
     try {
       const serialized: Record<string, any> = {
-        trees: {}
+        trees: {},
+        strategies: {}
       };
       
       for (const [id, tree] of this.trees.entries()) {
@@ -277,6 +300,10 @@ export class ToTService {
           ...tree,
           thoughts: Object.fromEntries(tree.thoughts)
         };
+      }
+      
+      for (const [id, strategy] of this.strategies.entries()) {
+        serialized.strategies[id] = strategy;
       }
       
       const jsonData = JSON.stringify(serialized, null, 2);
@@ -287,7 +314,7 @@ export class ToTService {
       
       await fs.rename(tempPath, this.storagePath);
       
-      logger.info(`Saved ${this.trees.size} trees to storage`);
+      logger.info(`Saved ${this.trees.size} trees and ${this.strategies.size} strategies to storage`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Failed to save ToT service state: ${message}`);
@@ -1019,8 +1046,380 @@ export class ToTService {
     };
   }
 
-  clearAll(): void {
+  clearEverything(): void {
     this.trees.clear();
+    this.strategies.clear();
+  }
+
+  clearTree(treeId: string): boolean {
+    return this.trees.delete(treeId);
+  }
+
+  clearStrategy(strategyId: string): boolean {
+    return this.strategies.delete(strategyId);
+  }
+
+  /**
+   * Create a new Strategy for grouping related trees
+   * @param name - Human-friendly name for the strategy
+   * @param description - Optional description of the strategy
+   * @returns The newly created strategy
+   */
+  createStrategy(name: string, description?: string): Strategy {
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      throw new Error('Strategy name is required and cannot be empty');
+    }
+
+    // Check for duplicate names (case-insensitive)
+    const existingStrategy = this.getStrategy(name);
+    if (existingStrategy) {
+      throw new Error(`Strategy with name "${name}" already exists`);
+    }
+
+    const strategyId = uuidv4();
+    const now = new Date().toISOString();
+
+    const strategy: Strategy = {
+      id: strategyId,
+      name: name.trim(),
+      description: description?.trim(),
+      status: 'active',
+      treeIds: [],
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.strategies.set(strategyId, strategy);
+    return strategy;
+  }
+
+  /**
+   * Get a strategy by ID or name (case-insensitive)
+   * @param idOrName - The ID or name of the strategy
+   * @returns The strategy if found, undefined otherwise
+   */
+  getStrategy(idOrName: string): Strategy | undefined {
+    // Try to find by ID first
+    const byId = this.strategies.get(idOrName);
+    if (byId) {
+      return byId;
+    }
+
+    // Try to find by name (case-insensitive)
+    const lowerIdOrName = idOrName.toLowerCase();
+    for (const strategy of this.strategies.values()) {
+      if (strategy.name.toLowerCase() === lowerIdOrName) {
+        return strategy;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * List all strategies, optionally filtered by status
+   * @param status - Optional status filter
+   * @returns Array of strategies
+   */
+  listStrategies(status?: string): Strategy[] {
+    let strategies = Array.from(this.strategies.values());
+
+    if (status) {
+      strategies = strategies.filter(s => s.status === status);
+    }
+
+    // Sort by updatedAt (most recent first)
+    strategies.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+    return strategies;
+  }
+
+  /**
+   * Update a strategy
+   * @param id - The ID of the strategy to update
+   * @param updates - Partial updates to apply
+   * @returns The updated strategy if found, null otherwise
+   */
+  updateStrategy(id: string, updates: Partial<Strategy>): Strategy | null {
+    const strategy = this.strategies.get(id);
+    if (!strategy) {
+      return null;
+    }
+
+    // Validate name uniqueness if being updated
+    if (updates.name && updates.name !== strategy.name) {
+      const existing = this.getStrategy(updates.name);
+      if (existing && existing.id !== id) {
+        throw new Error(`Strategy with name "${updates.name}" already exists`);
+      }
+    }
+
+    // Apply updates
+    if (updates.name !== undefined) {
+      strategy.name = updates.name.trim();
+    }
+    if (updates.description !== undefined) {
+      strategy.description = updates.description?.trim();
+    }
+    if (updates.status !== undefined) {
+      strategy.status = updates.status;
+    }
+    if (updates.treeIds !== undefined) {
+      strategy.treeIds = updates.treeIds;
+    }
+    if (updates.metadata !== undefined) {
+      strategy.metadata = updates.metadata;
+    }
+
+    strategy.updatedAt = new Date().toISOString();
+    return strategy;
+  }
+
+  /**
+   * Delete a strategy
+   * @param id - The ID of the strategy to delete
+   * @param deleteTrees - If true, also delete all trees in the strategy
+   * @returns true if deleted, false if not found
+   */
+  deleteStrategy(id: string, deleteTrees: boolean = false): boolean {
+    const strategy = this.strategies.get(id);
+    if (!strategy) {
+      return false;
+    }
+
+    // If deleteTrees is true, remove all trees in the strategy
+    if (deleteTrees) {
+      for (const treeId of strategy.treeIds) {
+        this.trees.delete(treeId);
+      }
+    } else {
+      // Otherwise, just remove the strategyId from trees
+      for (const treeId of strategy.treeIds) {
+        const tree = this.trees.get(treeId);
+        if (tree) {
+          tree.strategyId = undefined;
+          tree.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+
+    this.strategies.delete(id);
+    return true;
+  }
+
+  /**
+   * Move a tree to a strategy (lightweight operation)
+   * @param treeId - The ID of the tree to move
+   * @param strategyIdOrName - The ID or name of the target strategy
+   * @returns true if moved successfully, false otherwise
+   */
+  moveTreeToStrategy(treeId: string, strategyIdOrName: string): boolean {
+    const tree = this.trees.get(treeId);
+    if (!tree) {
+      throw new Error(`Tree not found: ${treeId}`);
+    }
+
+    const strategy = this.getStrategy(strategyIdOrName);
+    if (!strategy) {
+      throw new Error(`Strategy not found: ${strategyIdOrName}`);
+    }
+
+    // Remove tree from current strategy if it has one
+    if (tree.strategyId) {
+      const currentStrategy = this.strategies.get(tree.strategyId);
+      if (currentStrategy) {
+        currentStrategy.treeIds = currentStrategy.treeIds.filter(id => id !== treeId);
+        currentStrategy.updatedAt = new Date().toISOString();
+      }
+    }
+
+    // Add tree to new strategy
+    tree.strategyId = strategy.id;
+    tree.updatedAt = new Date().toISOString();
+
+    if (!strategy.treeIds.includes(treeId)) {
+      strategy.treeIds.push(treeId);
+    }
+    strategy.updatedAt = new Date().toISOString();
+
+    return true;
+  }
+
+  /**
+   * Remove a tree from its strategy
+   * @param treeId - The ID of the tree to remove
+   * @returns true if removed successfully, false otherwise
+   */
+  removeTreeFromStrategy(treeId: string): boolean {
+    const tree = this.trees.get(treeId);
+    if (!tree) {
+      throw new Error(`Tree not found: ${treeId}`);
+    }
+
+    if (!tree.strategyId) {
+      // Tree is not in a strategy, nothing to do
+      return true;
+    }
+
+    const strategy = this.strategies.get(tree.strategyId);
+    if (strategy) {
+      strategy.treeIds = strategy.treeIds.filter(id => id !== treeId);
+      strategy.updatedAt = new Date().toISOString();
+    }
+
+    tree.strategyId = undefined;
+    tree.updatedAt = new Date().toISOString();
+
+    return true;
+  }
+
+  /**
+   * Clone a tree into a strategy (deep copy with new IDs)
+   * @param treeId - The ID of the tree to clone
+   * @param strategyIdOrName - The ID or name of the target strategy
+   * @param options - Optional parameters including namePrefix for the tree goal
+   * @returns Object containing the new tree ID
+   */
+  cloneTreeToStrategy(treeId: string, strategyIdOrName: string, options?: { namePrefix?: string }): { newTreeId: string } {
+    const sourceTree = this.trees.get(treeId);
+    if (!sourceTree) {
+      throw new Error(`Tree not found: ${treeId}`);
+    }
+
+    const strategy = this.getStrategy(strategyIdOrName);
+    if (!strategy) {
+      throw new Error(`Strategy not found: ${strategyIdOrName}`);
+    }
+
+    // Generate new IDs for tree and all thoughts
+    const newTreeId = uuidv4();
+    const newRootId = uuidv4();
+    const now = new Date().toISOString();
+
+    // Create ID mapping for remapping parent/child relationships
+    const idMapping = new Map<string, string>();
+    idMapping.set(sourceTree.rootId, newRootId);
+
+    // Generate new IDs for all thoughts
+    for (const [oldId, thought] of sourceTree.thoughts.entries()) {
+      if (oldId !== sourceTree.rootId) {
+        idMapping.set(oldId, uuidv4());
+      }
+    }
+
+    // Create new thoughts with remapped IDs
+    const newThoughts = new Map<string, Thought>();
+    for (const [oldId, thought] of sourceTree.thoughts.entries()) {
+      const newId = idMapping.get(oldId)!;
+      const newParentId = thought.parentId ? (idMapping.get(thought.parentId) ?? null) : null;
+      const newChildren = thought.children.map(childId => idMapping.get(childId)!);
+
+      const newThought: Thought = {
+        id: newId,
+        content: thought.content,
+        parentId: newParentId,
+        children: newChildren,
+        evaluation: thought.evaluation,
+        creativity: thought.creativity,
+        risk: thought.risk,
+        criteriaScores: thought.criteriaScores ? { ...thought.criteriaScores } : undefined,
+        state: thought.state,
+        depth: thought.depth,
+        createdAt: now,
+        updatedAt: now,
+        verified: thought.verified,
+        verificationNotes: thought.verificationNotes,
+        metadata: thought.metadata ? { ...thought.metadata } : undefined
+      };
+
+      newThoughts.set(newId, newThought);
+    }
+
+    // Create new tree
+    const newTree: Tree = {
+      id: newTreeId,
+      rootId: newRootId,
+      thoughts: newThoughts,
+      goal: options?.namePrefix ? `${options.namePrefix} ${sourceTree.goal}` : sourceTree.goal,
+      createdAt: now,
+      updatedAt: now,
+      maxDepth: sourceTree.maxDepth,
+      strategyId: strategy.id,
+      metadata: sourceTree.metadata ? { ...sourceTree.metadata } : undefined,
+      usageStats: sourceTree.usageStats ? { ...sourceTree.usageStats } : undefined
+    };
+
+    // Add new tree to storage
+    this.trees.set(newTreeId, newTree);
+
+    // Add new tree to strategy
+    strategy.treeIds.push(newTreeId);
+    strategy.updatedAt = new Date().toISOString();
+
+    return { newTreeId };
+  }
+
+  /**
+   * Get all trees belonging to a strategy (by ID or name)
+   * @param strategyIdOrName - The ID or name of the strategy
+   * @returns Array of trees in the strategy
+   */
+  getTreesByStrategy(strategyIdOrName: string): Tree[] {
+    const strategy = this.getStrategy(strategyIdOrName);
+    if (!strategy) {
+      return [];
+    }
+
+    const trees: Tree[] = [];
+    for (const treeId of strategy.treeIds) {
+      const tree = this.trees.get(treeId);
+      if (tree) {
+        trees.push(tree);
+      }
+    }
+
+    return trees;
+  }
+
+  /**
+   * Get a strategy with its trees and basic statistics
+   * @param strategyIdOrName - The ID or name of the strategy
+   * @returns Object containing strategy, trees, and stats, or null if not found
+   */
+  getStrategyWithTrees(strategyIdOrName: string): { strategy: Strategy; trees: Tree[]; stats: { totalThoughts: number; totalTrees: number; averageEvaluation: number } } | null {
+    const strategy = this.getStrategy(strategyIdOrName);
+    if (!strategy) {
+      return null;
+    }
+
+    const trees = this.getTreesByStrategy(strategy.id);
+
+    // Calculate statistics
+    let totalThoughts = 0;
+    let totalEvaluation = 0;
+    let evaluatedThoughtsCount = 0;
+
+    for (const tree of trees) {
+      totalThoughts += tree.thoughts.size;
+      for (const thought of tree.thoughts.values()) {
+        if (thought.evaluation !== null) {
+          totalEvaluation += thought.evaluation;
+          evaluatedThoughtsCount++;
+        }
+      }
+    }
+
+    const averageEvaluation = evaluatedThoughtsCount > 0 ? totalEvaluation / evaluatedThoughtsCount : 0;
+
+    return {
+      strategy,
+      trees,
+      stats: {
+        totalThoughts,
+        totalTrees: trees.length,
+        averageEvaluation
+      }
+    };
   }
 
   /**

@@ -27,6 +27,17 @@ export interface UsageStats {
   requestCount: number;
 }
 
+export interface Strategy {
+  id: string;
+  name: string;
+  description?: string;
+  status: 'active' | 'paused' | 'completed' | 'archived';
+  treeIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, any>;
+}
+
 export interface Tree {
   id: string;
   rootId: string;
@@ -35,6 +46,7 @@ export interface Tree {
   createdAt: string;
   updatedAt: string;
   maxDepth: number;
+  strategyId?: string;
   metadata?: Record<string, any>;
   usageStats?: UsageStats;
 }
