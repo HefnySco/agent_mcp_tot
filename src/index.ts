@@ -605,7 +605,7 @@ class ToTMCPServer {
           },
           {
             name: 'visualize_tree',
-            description: 'Visualize a tree in human-readable format (ASCII, Mermaid, or DOT)',
+            description: 'Visualize a tree in human-readable format (ASCII, Mermaid, DOT, PNG, or SVG)',
             inputSchema: {
               type: 'object',
               properties: {
@@ -615,8 +615,8 @@ class ToTMCPServer {
                 },
                 format: {
                   type: 'string',
-                  enum: ['ascii', 'mermaid', 'dot'],
-                  description: 'Output format (default: ascii)'
+                  enum: ['ascii', 'mermaid', 'dot', 'png', 'svg'],
+                  description: 'Output format (default: ascii). PNG and SVG return base64-encoded image data.'
                 }
               },
               required: ['treeId']
@@ -1013,21 +1013,40 @@ class ToTMCPServer {
               throw new Error('treeId is required');
             }
 
-            const visualization = this.totService.visualizeTree({
+            const visualization = await this.totService.visualizeTree({
               treeId,
               format: format as any
             });
 
-            const result = {
-              content: [
-                {
-                  type: 'text',
-                  text: visualization
-                }
-              ]
-            };
-            await this.logRequest(name, args, result);
-            return result;
+            // For PNG/SVG formats, the visualization is a JSON string with base64 data
+            // For text formats (ascii, mermaid, dot), it's plain text
+            const isImageFormat = format === 'png' || format === 'svg';
+            
+            if (isImageFormat) {
+              const renderResult = JSON.parse(visualization);
+              const result = {
+                content: [
+                  {
+                    type: 'image',
+                    data: renderResult.data,
+                    mimeType: renderResult.mimeType
+                  }
+                ]
+              };
+              await this.logRequest(name, args, result);
+              return result;
+            } else {
+              const result = {
+                content: [
+                  {
+                    type: 'text',
+                    text: visualization
+                  }
+                ]
+              };
+              await this.logRequest(name, args, result);
+              return result;
+            }
           }
 
           case 'generate_and_evaluate_children': {

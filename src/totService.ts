@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { validateRequiredString, validateSessionId, validateEvaluationScore, validateNumberRange } from './utils/validators.js';
+import { renderMermaid, type RenderResult } from './utils/mermaidRenderer.js';
 
 const logger = {
   info: (message: string) => console.log(`[ToTService] ${message}`),
@@ -1904,9 +1905,9 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
   }
 
   /**
-   * Visualize a tree in the specified format (ASCII, Mermaid, or DOT)
+   * Visualize a tree in the specified format (ASCII, Mermaid, DOT, PNG, or SVG)
    */
-  visualizeTree(params: VisualizeTreeParams): string {
+  async visualizeTree(params: VisualizeTreeParams): Promise<string> {
     const tree = this.trees.get(params.treeId);
     if (!tree) {
       throw new TreeNotFoundError(params.treeId);
@@ -1921,6 +1922,11 @@ Reasoning: <1-2 sentences explaining your evaluation>`;
         return this.renderMermaidTree(tree);
       case 'dot':
         return this.renderDotTree(tree);
+      case 'png':
+      case 'svg':
+        const mermaidCode = this.renderMermaidTree(tree);
+        const result: RenderResult = await renderMermaid(mermaidCode, format as 'png' | 'svg');
+        return JSON.stringify(result);
       default:
         throw new Error(`Unsupported format: ${format}`);
     }

@@ -268,7 +268,7 @@ export interface TraversalStrategy {
   ): void;
 }
 
-export type VisualizationFormat = 'ascii' | 'mermaid' | 'dot';
+export type VisualizationFormat = 'ascii' | 'mermaid' | 'dot' | 'png' | 'svg';
 
 export interface VisualizeTreeParams {
   treeId: string;
