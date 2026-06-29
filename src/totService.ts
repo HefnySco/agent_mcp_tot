@@ -581,7 +581,7 @@ export class ToTService {
       throw new ThoughtNotFoundError(params.treeId, params.thoughtId);
     }
 
-    if (!thought.verified) {
+    if (thought.verified !== true) {
       throw new UnverifiedThoughtError(params.thoughtId);
     }
 

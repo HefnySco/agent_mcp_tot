@@ -22,8 +22,9 @@ describe('ToTService', () => {
   });
 
   beforeEach(() => {
-    // Clear strategies before each test to avoid accumulation
+    // Clear strategies and trees before each test to avoid accumulation
     (service as any).strategies.clear();
+    (service as any).trees.clear();
   });
 
   after(async () => {
